@@ -1,0 +1,22 @@
+# /etc/default/noexcuses.init - Configuration for noexcuses(1) init script
+
+# Override the location of the noexcuses command
+# e.g. noexcuses=/usr/local/bin/noexcuses
+
+# Default time period to scan looking for missing jobs: #d#m#h#s
+#period=1h
+
+# Forget outstanding jobs that were relocated to another cron host (i.e. -f)
+# This requires the mirror to be defined and mounted (or nothing happens).
+# Warning: If the file server takes longer to boot up than the cron host,
+# then the mirror directory will probably not be mounted! If that happens,
+# then this will not work and jobs that have been relocated to another
+# cron host may incorrectly be restarted on this host. [might be dangerous!]
+#relocated=no
+
+# Restart known jobs on boot? (i.e. -x all) [might be dangerous!]
+#restart=no
+
+# Recover missing jobs on boot? (i.e. -R) [might be dangerous!]
+#recover=no
+

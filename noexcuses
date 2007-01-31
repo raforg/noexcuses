@@ -1,0 +1,1334 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+
+# noexcuses - http://raf.org/noexcuses/
+#
+# Copyright (C) 2007 raf <raf@raf.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# or visit http://www.gnu.org/copyleft/gpl.html
+#
+# 20070131 raf <raf@raf.org>
+
+=head1 NAME
+
+I<noexcuses> - runs cronjobs until they succeed
+
+=head1 SYNOPSIS
+
+ usage: noexcuses [options] [--] cmd args...
+ options:
+   -h         - Print the help message then exit
+   -V         - Print the version message then exit
+   -m         - Print the man page then exit
+   -w         - Print the man page in html format then exit
+   -r         - Print the man page in nroff format then exit
+   -q         - Quiet mode (suppress warnings)
+   -v         - Verbose mode (announce each job with -x and -R)
+   -d period  - Specify the delay between attempts (default: 1h)
+
+ admin options:
+   -l         - Print outstanding jobs (mnemonic: list)
+   -p         - Run ps on outstanding jobs (mnemonic: processes)
+   -k pid|all - Cancel outstanding jobs (mnemonic: kill)
+   -x pid|all - Tell outstanding jobs to run now (mnemonic: execute)
+   -f         - Cancel outstanding jobs that were relocated (mn: forget)
+   -M period  - Print cronjobs lost due to downtime (mnemonic: missing)
+   -R period  - Run cronjobs lost due to downtime (mnemonic: recover)
+   -D         - For -M and -R, print source data for analysis (mn: data)
+   -U user    - Change to the given user (root only) (mnemonic: user)
+   -H host    - Override the hostname (mnemonic: host)
+   -A host    - Adopt the given host's jobs from the mirror (mnemonic: adopt)
+
+=head1 DESCRIPTION
+
+Sometimes cronjobs fail to run successfully because a required server (like
+a database or FTP server) is temporarily unavailable due to power failures,
+hardware failures, software failures, network outages, choice of operating
+system, pilot error, and the like.
+
+Typically, this results in someone being forced to examine crontabs and
+error reports, determine which cronjobs really need to be run, and then run
+them manually. This happened to me twice in one week. I don't want it to
+happen again. Cronjobs are meant to be automated and I want them to stay
+that way.
+
+This is the rationale for I<noexcuses>. It keeps track of cronjobs that have
+failed and keeps running them until they succeed. All you have to do is look
+at your crontabs, identify the cronjobs-that-must-succeed-no-matter-what and
+insert I<noexcuses> before the command.
+
+Then, when I<cron> runs I<noexcuses>, I<noexcuses> will run the given
+cronjob. If the cronjob fails, I<noexcuses> becomes a daemon that will retry
+the cronjob regularly until it succeeds. Even if the cron host is rebooted
+before the cronjob succeeds, I<noexcuses> lets you restart all of the
+outstanding cronjobs. If you can't wait for the cron host to reboot, its
+outstanding cronjobs can be relocated to another cron host and be forgotten
+on the original host when it finally reboots. Also, if the cron host is down
+for a while, I<noexcuses> can tell you which cronjobs missed out on running
+while it was down and run them. The initscript I<noexcuses.init> can make
+all these things happen automatically at boot time.
+
+In other words, I<noexcuses> is a free, lightweight, fine-grained,
+unobtrusive, high-availability tool for cronjobs. Or rather, it's a
+high-recoverability tool for cronjobs which can either be incorporated into
+a highly available system or used in the absence of one.
+
+=head1 OPTIONS
+
+=over 4
+
+=item C<-h>
+
+Print the help message then exit.
+
+=item C<-V>
+
+Print the version message then exit.
+
+=item C<-m>
+
+Print the man page then exit. This is equivalent to executing C<man
+noexcuses> but this works even when the man page isn't installed.
+
+=item C<-w>
+
+Print the man page in html format then exit. This lets you install the man
+page in html format with a command like:
+
+ mkdir -p /usr/share/doc/noexcuses/html &&
+ noexcuses -w > /usr/share/doc/noexcuses/html/noexcuses.1.html
+
+=item C<-r>
+
+Print the man page in nroff format then exit. This lets you install the man
+page with a command like:
+
+ noexcuses -r > /usr/share/man/man1/noexcuses.1
+
+=item C<-q>
+
+Quiet mode. Suppress warnings. Not recommended. Warnings are serious.
+
+=item C<-v>
+
+Verbose mode. Announces each job before executing them with the C<-x> and
+C<-R> options.
+
+=item C<-d> I<period>
+
+Specify the delay between attempts to run the command. The default is C<1h>
+which means 1 hour. The I<period> argument looks like:
+
+ [#d][#h][#m][#s]
+
+At least one of the above components must be present. If more than one is
+present, they must appear in the order shown above. If the given time period
+is invalid, it is ignored and the default period of C<1h> is used instead
+(and a warning is issued). The actual delay between attempts is always at
+least one minute.
+
+=item C<-l>
+
+Print outstanding jobs then exit. You will need to run this as the C<root>
+user to see the outstanding jobs of other users. This enables you to see the
+pid, owner and command of outstanding jobs. A simple way to be notified that
+jobs are failing (as if you didn't already know) is to put something like
+this in your crontab:
+
+ */5 * * * * noexcuses -l
+
+If it produces any output, I<cron> will send it to you in an email. A remote
+version is also a good idea.
+
+=item C<-p>
+
+Run I<ps> on outstanding jobs. This only shows process details for
+outstanding jobs for which a I<noexcuses> process is currently running. If
+the C<-p> output doesn't list a process for every outstanding job listed by
+the C<-l> option, then some I<noexcuses> processes are missing and you need
+to use the C<-x> option to start them again.
+
+=item C<-k> I<pid|all>
+
+Cancel outstanding jobs. If the option's argument is a pid, then only the
+corresponding job is cancelled (i.e. its process is killed and its state
+file is removed). If the option's argument is C<all>, then all of your
+outstanding jobs will be cancelled. You will need to run this as the C<root>
+user to cancel the outstanding jobs of other users. Note that if a pid is
+given and the current process with that pid doesn't look like the intended
+I<noexcuses> process, it will not be killed as this is a sign that the
+process was killed by other means or that the cron host has been rebooted
+and the pid now refers to an unrelated process.
+
+=item C<-x> I<pid|all>
+
+Tell outstanding jobs to try again now. If the option's argument is a pid,
+then only the corresponding job is executed. If the option's argument is
+C<all>, then all of your outstanding jobs will be executed. You will need to
+run this as the C<root> user to execute the outstanding jobs of other users.
+
+Note that this works even if the I<noexcuses> process referred to by I<pid>
+is no longer running (i.e. after a reboot). In this case, it reconstructs
+the original call to I<noexcuses> and invokes it.
+
+=item C<-f>
+
+Cancel outstanding jobs that were relocated to another cron host. Relocated
+jobs are defined to be those that are outstanding but for which there is no
+corresponding saved state in the mirror directory. The inference is that
+another cron host has completed this cron host's outstanding jobs. This
+option cannot be used unless a mirror directory is configured in
+C</etc/noexcuses.conf>. This option can't be used when the mirror directory
+is not mounted. If it is, for safety, no jobs are cancelled. The mirror
+directory is deemed to be mounted if the log file is present.
+
+=item C<-M> I<period>
+
+Print cronjobs that were lost due to downtime. If the cron host is down
+during a period of time in which cronjobs were scheduled to start, those
+cronjobs miss out entirely. This option examines your crontab and compares
+it against C<noexcuses.log> to determine which cronjobs guarded by
+I<noexcuses> missed out. You will need to run this as the C<root> user to
+examine all crontabs on the cron host. The I<period> argument specifies how
+far back in time to look for missing cronjobs. It has the same form as the
+C<-d> option's I<period> argument described above.
+
+=item C<-R> I<period>
+
+Run cronjobs that were lost due to downtime. This option is just like the
+C<-M> option except that instead of printing the lost cronjobs, it executes
+them. Note that it also adds fake log entries to the log file to simulate
+the job having run at the correct time. This is to prevent multiple uses of
+the C<-R> option from running the same jobs multiple times. When the missing
+jobs are run, they will also add an entry to the log file as usual. To be
+polite, there is a delay of one second between each job being started.
+
+=item C<-D>
+
+For C<-M> and C<-R>, print source data for analysis. This option can only be
+used in conjunction with the C<-M> or C<-R> option. It prints the cronjobs
+that were scheduled to execute during the specified time period. It also
+prints the log file entries that were produced in the specified time period.
+Use this option to verify for yourself that the output of the C<-M> option
+is correct before using the C<-R> option. Never use the C<-R> option until
+you know exactly what it is going to do and you know that this is the
+correct thing for it to do. If it isn't correct, you can run the correct
+commands manually but at least I<noexcuses> will have made it easy by
+presenting them all to you.
+
+=item C<-U> I<user>
+
+Change to the given user. Used in conjunction with other options, this
+option allows the C<root> user to list, cancel and run all of the
+outstanding or missing jobs of a particular user rather all users. This is
+intended to be used with the administrative options. It can also be used to
+launch a cronjob as another user but it's not a good idea. Doing this breaks
+the C<-M> and C<-R> options when they are used by the other user or when
+they are used by the C<root> user in conjunction with the C<-U> option to
+specify that user. The reason is that the cronjob will be logged in the
+other user's log file but the cronjob itself is in the C<root> user's
+crontab where the other user can't see it. So when the other user uses the
+C<-M> or C<-R> option to identify or run their missing jobs, any jobs in the
+C<root> user's crontab that are run as that user cannot be examined. If such
+jobs are missing, they will not be reported or started. So don't use the
+C<-U> option to run new jobs as another user unless the other user has no
+intention of using the C<-M> or C<-R> options and the C<root> user has no
+intention of using the C<-M> or C<-R> options in conjunction with the C<-U>
+option.
+
+=item C<-H> I<host>
+
+Override the hostname. This might be useful when multiple cron hosts share
+the same physical directory for their log and state files. When this is the
+case and the C<-H> is not used, only the files for the current host are
+examined. See the C<spool> parameter in the I<FILES> section. This is
+intended to be used with the administrative options but can also be used in
+normal usage to lie about what host a job is to run on should the need to do
+so arise.
+
+=item C<-A> I<host>
+
+Adopt the given host's jobs from the mirror directory. This will rename all
+of the given host's state files in the mirror directory. This is useful when
+a primary cron host has gone down and you want to relocate its outstanding
+jobs to a secondary cron host. Both cron hosts must share the mirror
+directory. After adopting the primary cron host's outstanding jobs, using
+the C<-x> I<all> option will restart them on the secondary cron host. To
+start cronjobs that missed out while the primary cron host was down,
+identical crontabs must be installed and then the C<-R> option must be used
+together with the C<-H> option naming the primary cron host.
+
+Example: Host C<cron1> goes down. Its cronjobs are relocated to host C<cron2>:
+
+On host C<cron2>, adopt host C<cron1>'s outstanding jobs:
+
+ noexcuses -A cron1
+ noexcuses -x all
+ noexcuses -H cron1 -R 1h
+
+On host C<cron1>, after it has rebooted:
+
+ noexcuses -f
+ noexcuses -x all
+ noexcuses -R 1h
+
+=back
+
+=head1 FILES
+
+The configuration files for I<noexcuses> are C</etc/noexcuses.conf> and
+C<~/.noexcusesrc>. They can contain shell-style comments (i.e. # to end of
+line) and blank lines. They can contain the following parameters:
+
+ delay = 1h
+ spool = /var/noexcuses
+ mirror = /nfs/fileserver/noexcuses
+ cronpath = /var/spool/cron/crontabs
+ pslp = ps -lp
+ psfp = ps -fp
+ path = /usr/bin:/bin:
+ supath = /usr/bin:/bin:
+
+The C<delay> parameter specifies the default delay between attempts to run a
+cronjob that has failed.
+
+The C<spool> parameter specifies the directory in which I<noexcuses> stores
+its state and log files. This directory must be writable by all users of
+I<noexcuses> and it must have the sticky bit set (like C</tmp> and
+C</var/tmp> do). This directory must be created in advance by the C<root>
+user. If not, the C</var/tmp> directory will be used instead. C</var/tmp>
+must exist just in case. I really mean that.
+
+If you override the C<spool> parameter in your own C<~/.noexcusesrc> file,
+then your outstanding cronjobs will not be restarted automatically at boot
+time but you can still restart them yourself with the C<-x> option. You
+should also override the C<mirror> parameter if you override the C<spool>
+parameter and the C<mirror> parameter is supplied in C</etc/noexcuses.conf>.
+
+There are also log files in the directory specified by the C<spool>
+parameter. This is crucial for the C<-M> and C<-R> options. Don't delete
+them after a reboot before you have recovered any lost cronjobs. So using
+C</var/tmp> for the C<spool> is a bad idea.
+
+The C<mirror> parameter specifies a separate directory (at least on a
+physically separate disk but preferably on a physically separate file
+server). This is to help you recover when faced with disk failure. If the
+log files, state files and crontabs are stored elsewhere, then the jobs can
+be restarted on another host without having to wait for the original cron
+host to be repaired or replaced.
+
+The C<cronpath> parameter specifies the directory containing all of the
+crontab files.
+
+The C<pslp> parameter specifies the I<ps> command to use that provides the
+"long" format needed by the C<-k> and C<-x> options. The default is C<ps -lp>.
+
+The C<psfp> parameter specifies the I<ps> command to use that provides the
+"full" format needed by the C<-l> option. The default is C<ps -fp>.
+
+The C<path> and C<supath> parameters specify, for normal users and the super
+user respectively, the C<PATH> environment variable to be used when starting
+I<noexcuses> processes with the C<-x> and C<-R> options. This should match
+the C<PATH> environment variable that I<cron> supplies to your cronjobs.
+
+The configuration file for I<noexcuses.init> is
+C</etc/default/noexcuses.init>. It is a shell script that is executed by
+I<noexcuses.init>. It can contain the following variables:
+
+ noexcuses # Override the location of the noexcuses command
+ period    # Default period between attempts to run a failing job (Default 1h)
+ restart   # Restart all known jobs on boot? (i.e. -x) (Default no)
+ recover   # Recover missing jobs on boot? (i.e. -R) (Default no)
+ relocated # Forget jobs that were relocated? (i.e. -f) (Default no)
+ cancel    # Cancel all known jobs on boot? (i.e. -k) (Default no)
+
+See the C<RELOCATING CRONJOBS TO ANOTHER CRON HOST> for more information
+on the C<relocated> variable.
+
+=head1 PERSISTENCE ACROSS REBOOTS
+
+If I<noexcuses> tries to run its cronjob and fails, it saves its state to
+disk and then retries the cronjob every now and then until it succeeds. But
+the cron host may be rebooted before it succeeds. When this happens, you can
+use the C<-x> option to restart all of the outstanding jobs.
+
+Additionally, if any cronjobs guarded by I<noexcuses> were scheduled to
+start during the time that the cron host was down, the aforementioned saving
+of state to disk will not have taken place because I<cron> didn't get a
+chance to start I<noexcuses>. When this happens, you can use the C<-M> and
+C<-R> options to run any cronjobs that were scheduled to start during the
+time that the cron host was down.
+
+Both of these actions can be automated at boot time by installing
+I<noexcuses.init> as an initscript and configuring it (in
+C</etc/default/noexcuses.init>) to restart outstanding jobs and recover
+missing jobs. By default, I<noexcuses.init> does nothing at boot time. See
+the I<BUGS> and I<RACE CONDITIONS> sections for the reason.
+
+=head1 RELOCATING CRONJOBS TO ANOTHER CRON HOST
+
+If your cron host is going to be down for longer than your cronjobs can
+afford to wait, you can relocate them to another cron host. The other cron
+host needs to have the same software installed in the same places and the
+same crontabs (or readily accessible copies) as the original cron host. Most
+importantly, the other cron host must have access to the original cron
+host's spool or mirror directory and it must use a copy of it as its own
+spool directory.
+
+Given all of that, the original cron host's outstanding jobs can be started
+up on the other cron host by using I<noexcuses> with the C<-H> and C<-x>
+options. And if the other cron host has the original cron host's crontabs
+installed, then any jobs that missed out on being run by the original cron
+host can be recovered on the other cron host with the C<-H> and C<-R>
+options.
+
+When the original cron host comes up again, the C<-f> option can then be
+used to make it forget its outstanding jobs that were relocated and
+completed successfully on the other cron host. Note that if there were jobs
+that had been relocated but that have not yet completed successfully on the
+other cron host would also be restarted on the original cron host if the
+C<-x> option where used of the original cron host, even after the C<-f>
+option has been used. If the C<-R> option has been used on the other cron
+host, then it should not be used on the original cron host.
+
+In terms of the init script C<noexcuses.init> and its configuration
+C</etc/default.noexcuses.init>, if you use them at all, you can either turn
+on (C<restart> and/or C<recovered>) or (C<relocated> and maybe C<cancel>)
+but not both.
+
+=head1 IS THIS LIKE ANACRON?
+
+I<Anacron> serves a different purpose to I<noexcuses>. I<Anacron> seems to
+be for home computers that aren't always up and where nobody is going to be
+upset if their cronjobs don't run when scheduled (otherwise it wouldn't be
+expected for the host to be down). What it does is to ensure that too much
+time doesn't pass between invocations of periodic jobs assuming that the
+host is up occasionally. The success or failure of those jobs is of no more
+importance to I<anacron> than it is to I<cron> itself.
+
+I<Noexcuses> is for production systems where the cron host is always up
+(unless there's a catastrophe) and cronjobs require access to other hosts
+that are always up (unless there's a catastrophe) and there are people
+depending on cronjobs being run either when scheduled or as soon as possible
+after any catastrophes are resolved. What it does is to ensure that cronjobs
+run successfully even in the face of disasters in the machine room.
+
+=head1 WHY IS THERE NO NAME OPTION?
+
+You might be surprised that I<noexcuses> provides no option to name a
+cronjob. Naming is usually desired to ensure uniqueness. In other words, a
+name option could ensure that, if an attempt to run a named cronjob fails,
+then any subsequently cronned instances of identically named cronjobs would
+be suppressed until the outstanding job of the same name finally succeeds.
+This might seem desirable but it is inappropriate for the sort of cronjobs
+that need to be guarded by I<noexcuses>. These jobs are the ones that must
+run no matter what. That's why you would use I<noexeucses> with them. If
+suppressing cronjobs were acceptable, then it would not make sense to use
+I<noexcuses> at all for that cronjob. In fact, if it were acceptable to run
+just any one instance of the cronjob, then just letting the cronjob fail
+until the problem is resolved (after which it can run successfully) would be
+equally acceptable. In other words, if you think that a name option is
+needed for a particular cronjob, then that cronjob probably doesn't need
+I<noexcuses>. Consider I<daemon> instead (C<http://libslack.org/daemon/>).
+
+=head1 CAVEAT
+
+You must make sure that cronjobs that are to run via I<noexcuses> are
+written appropriately. Cronjobs that perform a single action using a single
+remote server are probably fine. However, cronjobs can get more complicated
+than that. A cronjob that requires two remote servers, either or both of
+which may fail, should be written so as to not waste time on subsequent
+attempts to run, nor should they modify external data multiple times if that
+would not be a good thing to do. For example, a cronjob that updates and
+queries a remote database, saves the data to disk, and then sends the data
+to a remote FTP server has two main points of failure to consider: the
+database and the FTP server. The cronjob should be written so that if only
+the FTP server fails, the database activity isn't repeated on subsequent
+attempts to run the cronjob. At best, it's inefficient. At worst, performing
+the database updates multiple times could be a very bad thing indeed. In
+other words, all cronjobs should be efficiently idempotent and failsafe. And
+of course, they must communicate their failure to their caller,
+I<noexcuses>, by exiting with a non-zero return code.
+
+You need to be wary when the cron host is part of a cluster. There are many
+different types of cluster and I can't offer specific instructions on making
+I<noexcuses> work in your particular cluster environment except to advise
+you to know how your cluster works and to know how I<noexcuses> works and to
+make sure that they will work together. For safety in a clustered
+environment, it's probably best not to use I<noexcuses.init>. Instead, run
+C<noexcuses> manually on one of the hosts in the cluster after a reboot (at
+least until you can be sure that you know what you are doing).
+
+Also, be aware that I<noexcuses> doesn't know when you have changed your
+crontab or what it looked like before. For the purposes of the C<-M> and
+C<-R> options, I<noexcuses> assumes that the current crontab has been in
+place unchanged for the entire time period specified on the command line.
+This would normally be the case. If it is not the case you can get many
+false positives. Don't believe them. Even better, don't change your crontabs
+before recovering lost jobs after a reboot of the cron host.
+
+=head1 BUGS
+
+The following only applies to the C<-M> and C<-R> options.
+
+Doesn't examine atjobs to look for any jobs that should have started while
+the host was down. So don't use I<noexcuses> in atjobs.
+
+Doesn't examine the (Vixie cron) system crontab (C</etc/crontab>) to look
+for any jobs that should have started while the host was down. So don't use
+I<noexcuses> in C</etc/crontab>. Similarly, C</etc/anacrontab> is ignored.
+
+There is only partial support for Vixie cron syntax extensions. The user
+column in C</etc/crontab> isn't supported. Mapping C<%> to return in
+commands isn't supported. However, the following extensions are supported:
+environment variables, step values (e.g. C<*/5> and C<0-23/2>); day and
+month names (first three letters thereof); and the special strings (i.e.
+C<@yearly>, C<@annually>, C<@monthly>, C<@weekly>, C<@daily>, C<@midnight>
+and C<@hourly> (but not C<@reboot>)).
+
+Doesn't replicate shell parsing of commands. This matters when comparing
+crontab entries against the log file entries to identify which scheduled
+jobs were not logged as having run. If the command in the crontab doesn't
+exactly match a log file entry, I<noexcuses> will think that the job hasn't
+run and that it needs to be run. So make sure that your cronjobs are simple
+commands. Don't use any shell meta-characters except for a single space
+between each argument. In other words:
+
+ cmd arg1 arg2 arg3 # GOOD (no metacharacters)
+ cmd arg1 arg2 'arg3' # BAD (quotes)
+ cmd arg1  arg2  arg3 # BAD (extra spaces)
+ cmd  arg1 'ar g2' arg3 # BAD (quotes, spaces)
+ sh -c "cmd \"a b c\" && echo yes || echo no" # BAD (everything)
+
+I cannot guarantee that the C<-R> option will detect every job that missed
+out on being run nor that it will not detect any jobs that did run. It works
+provided that cron starts jobs within 1 minute of the time for which they
+are scheduled and provided there's no disk corruption of the log file and
+provided that the cron host doesn't crash at a particularly bad time. See
+the I<RACE CONDITIONS> section to find out when that is. None of that can be
+guaranteed. Always check with the C<-M> option first. This will print a list
+of commands that the C<-R> option would execute. Use the C<-D> option as
+well to verify the list of missing jobs yourself. If the list is wrong, run
+the correct commands manually.
+
+In particular, after a cron host crash, determine if a cronjob could have
+been running at the time of the crash and somehow verify whether or not it
+completed before I<noexcuses> could log it. If you don't, and just run
+I<noexcuses> with the C<-R> option, you may end up running a cronjob that
+did already complete successfully.
+
+Similarly, after a cron host crash, determine if a cronjob was logged as
+having run unsuccessfully at the time of the crash but for which there is no
+corresponding state file. If you don't, and just run I<noexcuses> with the
+C<-R> or C<-x> option, you may miss out on running a cronjob that has not
+yet been run successfully.
+
+Also, after a cron host crash, determine if a cronjob was logged as having
+run unsuccessfully before the cron host crash and determine somehow whether
+or not it might have just completed successfully at the time of the cron
+host crash, before its statefile could be removed. If you don't, and just
+run the I<noexcuses> with the C<-x> option, you may end up running a cronjob
+that did already complete successfully.
+
+For these reasons, the I<noexcuses.init> initscript shouldn't really be used
+at all. Recovery after a cron host crash should be done manually unless you
+know that no harm will be done if any cronjob runs an extra time and you
+know that you can subsequently identify any cronjob that didn't run and
+restart those manually. The default behaviour of I<noexcuses.init> is to do
+nothing at boot time. Resist the temptation to change that unless the risk
+is acceptable.
+
+=head1 RACE CONDITIONS
+
+The C<-x> option works by examining the state files (as do the C<-l>, C<-p>
+and C<-k> options). The C<-M> and C<-R> options work by examining the log
+file and crontabs.
+
+Log entries are written after the first attempt terminates (whether
+successfully or not). The state file is written after the first attempt
+terminates unsuccessfully. This "ensures" that, in the event of a cron host
+crash or reboot, one and only one of the C<-x> and C<-R> options will start
+a given cronjob. If the cron host crashes before or during the first
+attempt, C<-R> will run it. If the cron host crashes after the first attempt
+failed, C<-x> will run it.
+
+However, there are three race conditions. If the cron host crashes after a
+cronjob's first attempt terminates successfully but before the log file
+entry has been written, then the C<-R> option after rebooting will run the
+cronjob even though it terminated successfully. If the cron host crashes
+after the first attempt terminates unsuccessfully and after the log file
+entry has been written but before the state file is written, then neither
+the C<-R> option nor the C<-x> option after rebooting will run the cronjob
+even though it did not terminate successfully. If the cron host crashes
+after an initially unsuccessful cronjob finally succeeds but before its
+state file is removed, then the C<-x> option after rebooting will run the
+cronjob even though it terminated successfully. The windows of opportunity
+here are very small but they are there nonetheless. Disk corruption of the
+log and state files will also ruin your day. So make use of the C<mirror>
+parameter in the configuration file.
+
+So I<noexcuses> doesn't really ensure anything but it is a vast improvement
+over I<cron> by itself. Even so, please monitor your uninterruptible power
+supplies and generators and test them regularly. I really mean that. If
+that's too much to ask, then sudden power failures are bound to happen and
+may trigger one of the race conditions.
+
+=head1 GOLEM
+
+I wanted to call this program I<golem> because it makes other programs more
+determined than they would otherwise be to obey the words in their heads. It
+seems to me to be a singularly appropriate name. However, there are already
+too many programs out there called I<golem>. And anyway, all software are
+golem. This program just makes them better golems. Of all the other names I
+thought of, I<noexcuses> seemed to be the most sensible.
+
+=head1 SEE ALSO
+
+I<cron(8)>, I<crontab(1)>, I<crontab(5)>, I<anacron(8)>, I<init(8)>,
+I<daemon(1)>
+
+=head1 AUTHOR
+
+20070131 raf <raf@raf.org>
+
+=cut
+
+my $name = 'noexcuses'; # Name of this program
+my $version = '0.1'; # Version of this program
+my $config = "/etc/$name.conf"; # System-wide configuration file
+my $spool = "/var/$name"; # State/log file directory
+my $cronpath = '/var/spool/cron/crontabs'; # Directory containing all crontabs
+my $mirror; # Mirror directory for remote copy state/log files (optional)
+my $pslp = 'ps -lp'; # Command to lookup processes for the -x and -k options
+my $psfp = 'ps -fp'; # Command to lookup processes for the -l option
+my $path = '/usr/bin:/bin:'; # $PATH when starting noexcuses processes
+my $supath = $path; # $PATH when starting noexcuses processes for root
+my $default_delay = '1h'; # Default delay between attempts to run a job
+my $default_gap = '12h'; # Default time period to examine for -M and -R
+my $start = time; # When did cron start this process?
+my %decoding = (a => "\a", b => "\b", f => "\f", n => "\n", r => "\r", t => "\t");
+my %encoding = map { ($decoding{$_}, $_) } keys %decoding;
+my %month = qw(jan 1 feb 2 mar 3 apr 4 may 5 jun 6 jul 7 aug 8 sep 9 oct 10 nov 11 dec 12);
+my %weekday = qw(sun 0 mon 1 tue 2 wed 3 thu 4 fri 5 sat 6);
+
+my %op;
+use Getopt::Std;
+help() if !getopts 'hVmwrqvd:lpk:x:fM:R:DU:H:A:', \%op or exists $op{h};
+version(), exit if exists $op{V};
+man(), exit if exists $op{m};
+html(), exit if exists $op{w};
+nroff(), exit if exists $op{r};
+my $quiet = exists $op{q};
+my $verbose = exists $op{v};
+my $delay = $default_delay;
+use Sys::Hostname;
+my $hostname = exists $op{H} ? $op{H} : hostname; $hostname =~ s/\..*$//;
+help("Invalid -H option argument: '$hostname' (Must contain only alphanumerics and dash)") unless $hostname =~ /^[a-zA-Z0-9-]+$/;
+delete $op{U} if exists $op{U} && $< && $op{U} eq getpwuid($<);
+help("The -U option may only be used by root") if exists $op{U} && $<;
+help("Invalid -U option argument: '$op{U}' (No such user)") if exists $op{U} && !defined getpwnam($op{U});
+my ($username, $logpath, $logmirror);
+change_user(scalar getpwnam($op{U})) if exists $op{U};
+init_user() unless exists $op{U};
+$delay = $op{d} if exists $op{d};
+$delay = parse_period($delay, $default_delay);
+help("The -l -p -k -x -f -M and -R options are mutually exclusive") if (exists $op{l} ? 1 : 0) + (exists $op{p} ? 1 : 0) + (exists $op{k} ? 1 : 0) + (exists $op{x} ? 1 : 0) + (exists $op{f} ? 1 : 0) + (exists $op{M} ? 1 : 0) + (exists $op{R} ? 1 : 0) > 1;
+help("The -D option requires either the -M or -R option") if exists $op{D} && !(exists $op{M} || exists $op{R});
+help("The -f option requires a mirror directory to be configured") if exists $op{f} && !(defined $mirror && -d $mirror);
+list_jobs(), exit if exists $op{l};
+list_processes(), exit if exists $op{p};
+adopt_jobs(), exit if exists $op{A};
+help("Invalid -k option argument: $op{k} (Must be a pid or \"all\")") if exists $op{k} && $op{k} !~ /^(?:\d{1,5}|all)$/i;
+kill_job($op{k}), exit if exists $op{k};
+help("Invalid -x option argument: $op{x} (Must be a pid or \"all\")") if exists $op{x} && $op{x} !~ /^(?:\d{1,5}|all)$/i;
+execute_job($op{x}), exit if exists $op{x};
+forget_jobs(), exit if exists $op{f};
+my $debug = exists $op{D};
+missing_jobs($op{M}), exit if exists $op{M};
+recover_jobs($op{R}), exit if exists $op{R};
+help("No command supplied") unless @ARGV;
+my $logged = 0;
+run_job() or daemon();
+my $state = save_state();
+$SIG{HUP} = sub {};
+while (delay()) { run_job() }
+
+sub help
+{
+	my $msg = shift;
+	print $msg, "\n" if defined $msg;
+	print << "END";
+usage: $name [options] [--] cmd args...
+options:
+  -h         - Print the help message then exit
+  -V         - Print the version message then exit
+  -m         - Print the man page then exit
+  -w         - Print the man page in html format then exit
+  -r         - Print the man page in nroff format then exit
+  -q         - Quiet mode (suppress warnings)
+  -v         - Verbose mode (announce each job with -x and -R)
+  -d period  - Specify the delay between attempts (default: $default_delay)
+
+admin:
+  -l         - Print outstanding jobs (mnemonic: list)
+  -p         - Run ps on outstanding jobs (mnemonic: processes)
+  -k pid|all - Cancel outstanding jobs (mnemonic: kill)
+  -x pid|all - Tell outstanding jobs to try again now (mnemonic: execute)
+  -f         - Cancel outstanding jobs that were relocated (mn: forget)
+  -M period  - Print cronjobs lost due to downtime (mnemonic: missing)
+  -R period  - Run cronjobs lost due to downtime (mnemonic: recover)
+  -D         - For -M and -R, print source data for analysis (mnemonic: data)
+  -U user    - Change to the given user (root only) (mnemonic: user)
+  -H host    - Override the hostname (mnemonic: host)
+  -L         - Suppress updates in the mirror directory (mnemonic: local)
+  -A host    - Adopt the given host's jobs from the mirror (mnemonic: adopt)
+
+END
+	exit 1
+}
+
+sub version
+{
+	print "$name-$version\n";
+}
+
+sub man
+{
+	my $noquotes = (`pod2man -h 2>&1` =~ /--quotes=/) ? '--quotes=none' : '';
+	system "LANG=C pod2man -c \"Noexcuses User Manual\" -r '$name-$version' -s 1 $noquotes $0 | LANG=C nroff -man | " . ($ENV{PAGER} || 'more');
+	die "Failed to run pod2man | nroff | @{[$ENV{PAGER} || 'more']}\n" if $?;
+}
+
+sub nroff
+{
+	my $noquotes = (`pod2man -h 2>&1` =~ /--quotes=/) ? '--quotes=none' : '';
+	system "LANG=C pod2man -c \"Noexcuses User Manual\" -r '$name-$version' -s 1 $noquotes $0";
+	die "Failed to run pod2man\n" if $?;
+}
+
+sub html
+{
+	my $pid = open H, '-|', "LANG=C pod2html --title \"$name(1)\" --noindex $0" or die "Failed to run pod2html\n";
+	print do { local $/; $_ = <H>; s/<(?:a\s+[^>]+|\/a)>//ig; s/\n<!-- index begin.*index end -->\n//is; close H; $_ } if defined $pid;
+	unlink glob 'pod2htm*';
+}
+
+sub run_job
+{
+	my $rc = system @ARGV;
+	log_job($rc), ++$logged unless $logged;
+	return if $rc;
+	unlink $state if defined $state;
+	unlink mirror($state) if defined $mirror && defined $state;
+	exit;
+}
+
+sub log_job
+{
+	my $rc = shift; umask 077;
+	open LOG, '>>', $logpath or warning("Failed to open '$logpath' for append: $!"), return;
+	my $data = "@{[timestamp($start)]} host=$hostname user=@{[scalar getpwuid($<)]} delay=@{[unparse_period($delay)]} cmd=«@{[join '» «', map { encode($_) } @ARGV]}» rc=$rc logtime=@{[timestamp()]}\n";
+	print LOG $data or warning("Failed to write log to $logpath: " . substr($data, 0, -1));
+	close LOG or warning("Failed to close log $logpath");
+	mirror_log_job($data) if defined $mirror;
+}
+
+sub mirror_log_job
+{
+	my $data = shift;
+	open LOG, '>>', $logmirror or warning("Failed to open '$logmirror' for append: $!"), return;
+	print LOG $data or warning("Failed to write log mirror to $logmirror: " . substr($data, 0, -1));
+	close LOG or warning("Failed to close log mirror $logmirror");
+}
+
+sub save_state
+{
+	use File::Temp; File::Temp->safe_level(File::Temp::HIGH);
+	my $fh = eval { new File::Temp(dir => $spool, template => "$name.$hostname.XXXXXX", unlink => 0) };
+	$fh = eval { new File::Temp(dir => '/var/tmp', template => "$name.$hostname.XXXXXX", unlink => 0) } unless defined $fh;
+	File::Temp->safe_level(File::Temp::STANDARD) unless defined $fh;
+	$fh = eval { new File::Temp(dir => '/var/tmp', template => "$name.$hostname.XXXXXX", unlink => 0) } unless defined $fh;
+	my $data = join("\n", 'host ' . $hostname, 'pid ' . $$, 'delay ' . $delay, map("env $_=$ENV{$_}", keys %ENV), @ARGV);
+	warning("Failed to create state file for:\n$data"), return unless defined $fh;
+	print $fh $data, "\n" or warning("Failed to save state to " . $fh->filename . "\n" . $data);
+	close $fh or warning("Failed to close state file: " . $fh->filename . "\n" . $data);
+	save_state_mirror(mirror($fh->filename), $data) if defined $mirror;
+	return $fh->filename;
+}
+
+sub mirror
+{
+	my $state = shift;
+	return $mirror . substr($state, length $spool);
+}
+
+sub spool
+{
+	my $state = shift;
+	return $spool . substr($state, length $mirror);
+}
+
+sub save_state_mirror
+{
+	my $fpath = shift;
+	my $data = shift;
+	open M, '>', $fpath or warning("Failed to create state mirror file for:\n$data"), return;
+	print M $data, "\n" or warning("Failed to mirror state to $fpath for:\n" . $data);
+	close M or warning("Failed to close state mirror file: $fpath\n");
+}
+
+sub delay
+{
+	my $duration = $delay - (time - $start);
+	sleep($duration < 60 ? 60 : $duration);
+	$start = time;
+}
+
+sub list_jobs
+{
+	for my $job (all_jobs())
+	{
+		my $option = ($job->{delay} != $delay) ? ' -d ' . unparse_period($job->{delay}) : '';
+		my $owner = ($hostname ne $job->{host} || $< != $job->{uid}) ? "$job->{user}\@$job->{host} " : '';
+		print "${owner}pid $job->{pid}: noexcuses$option @{[join(' ', map { join('\\ ', split(/\s+/, $_)) } @{$job->{cmd}})]}\n";
+	}
+}
+
+sub list_processes
+{
+	my $hdr = 0;
+	for my $s (all_jobs())
+	{
+		my @ps = split /\n/, `$psfp $s->{pid}`;
+		print(join("\n", @ps), "\n"), $hdr = 1, next unless $hdr;
+		print $ps[1], "\n" if @ps == 2;
+	}
+}
+
+sub kill_job
+{
+	my $pid = shift;
+	my @jobs = grep { $pid =~ /all/i || $_->{pid} == $pid } all_jobs();
+	warning(($pid =~ /all/i) ? "No outstanding jobs found" : "Pid $pid not found"), return unless @jobs;
+	kill 'TERM', $_ or warning("Failed to terminate process $_: $!") for map { $_->{pid} } grep { isnoexcuse($_->{pid}) } @jobs;
+	unlink $_ or warning("Failed to rm $_: $!") for map { $_->{path} } @jobs;
+	do { unlink mirror($_) for map { $_->{path} } @jobs } if defined $mirror;
+}
+
+sub execute_job
+{
+	my $pid = shift;
+	my @jobs = grep { $pid =~ /all/i || $_->{pid} == $pid } all_jobs();
+	warning(($pid =~ /all/i) ? "No outstanding jobs found" : "Pid $pid not found"), return unless @jobs;
+	my $me = me();
+	my $jobs = 0;
+	for my $s (@jobs)
+	{
+		select(undef, undef, undef, 1) if $jobs; ++$jobs;
+		warning("Executing: @{$s->{cmd}}") if $verbose;
+		do { kill 'HUP', $s->{pid} or warning("Failed to signal process $_: $! (giving up!)") }, next if isnoexcuse($s->{pid});
+		# It wasn't running, start it again.
+		warning("Can't change to user $s->{user} (giving up!)"), next if $< && $s->{uid} != $<;
+		my $childpid = fork();
+		warning("Failed to fork: $!"), next unless defined $childpid;
+		next if $childpid;
+		change_user($s->{uid}) if !$< && $s->{uid} != $<;
+		unlink $s->{path}; unlink mirror($s->{path}) if defined $mirror;
+		my $home = (getpwuid $s->{uid})[7];
+		chdir $home or warning("Failed to cd $home: $!");
+		$ENV{PATH} = $< ? $path : $supath;
+		$ENV{$_} = $s->{env}->{$_} for keys %{$s->{env}};
+		exec $me, '-d', unparse_period($s->{delay}), @{$s->{cmd}} or print STDERR; # Suppress warning
+		exit;
+	}
+}
+
+sub forget_jobs
+{
+	warning("Mirror directory doesn't look mounted (Aborting)"), return unless glob "$mirror/$name.$hostname.*.log";
+	my @relocated_jobs = grep { stat(mirror($_->{path})) ? 0 : 1 } all_jobs();
+	warning("No relocated jobs found (Nothing to do)"), return unless @relocated_jobs;
+	my @false_positives = grep { isnoexcuse($_->{pid}) } @relocated_jobs;
+	warning("There are jobs that seem to be both running locally and relocated (Aborting)"), return if @false_positives;
+	unlink $_ or warning("Failed to rm $_: $!") for map { $_->{path} } @relocated_jobs;
+}
+
+sub adopt_jobs
+{
+	my $realhost = $hostname;
+	$hostname = $op{A};
+	warning("Mirror directory doesn't look mounted (Aborting)"), return unless glob "$mirror/$name.$hostname.*.log";
+	my @orphan_jobs = all_jobs($mirror);
+	warning("No orphan jobs found (Nothing to do)"), return unless @orphan_jobs;
+	adopt_job($_, $realhost) or warning("Failed to adopt $_: $!") for map { $_->{path} } @orphan_jobs;
+}
+
+sub adopt_job
+{
+	my $oldpath = shift;
+	my $newhost = shift;
+	my $newpath = $oldpath;
+	$newpath =~ s/(\/\Q$name\E\.)(.*)(\..{6})$/$1$newhost$3/;
+	mv($oldpath, $newpath) or return 0;
+	cp($newpath, spool($newpath)) or return 0;
+	return 1;
+}
+
+sub missing_jobs
+{
+	my @missing = find_missing_jobs(shift);
+	print "missing:\n" if $debug;
+	print "$_->{time} host $_->{host} user $_->{user} cmd $_->{cmd}\n" for @missing;
+}
+
+sub recover_jobs
+{
+	my $jobs = 0;
+	for my $job (find_missing_jobs(shift))
+	{
+		select(undef, undef, undef, 1) if $jobs; ++$jobs;
+		warning("Recovering: $job->{cmd}") if $verbose;
+		my ($uid, $home) = (getpwnam $job->{user})[2, 7];
+		warning("Can't change to user $job->{user} (giving up!)"), next if $< && $uid != $<;
+		my $childpid = fork();
+		warning("Failed to fork: $!"), next unless defined $childpid;
+		next if $childpid;
+		change_user($uid) if !$< && $uid != $<;
+		chdir $home or warning("Failed to cd $home: $!");
+		$ENV{PATH} = ($<) ? $path : $supath;
+		$ENV{$_} = $job->{env}->{$_} for keys %{$job->{env}};
+		system($job->{cmd}) == 0 or warning("Failed to run: $job->{cmd} (rc=$?)"), next;
+		fake_log_job($job, $?);
+		exit;
+	}
+}
+
+sub fake_log_job
+{
+	my $job = shift;
+	my $rc = shift;
+	my ($jobdelay) = $job->{cmd} =~ /\Q$name\E\+-d\s*([\ddhms]+)/;
+	$jobdelay = $delay unless defined $jobdelay;
+	open LOG, '>>', $logpath or warning("Failed to open '$logpath' for append: $!"), return;
+	print LOG "$job->{time} host=$job->{host} user=$job->{user} delay=@{[unparse_period($jobdelay)]} cmd=«@{[join '» «', map { encode($_) } split /\s+/, $job->{cmd}]}» rc=$rc logtime=@{[timestamp()]} # fake\n" or warning("Failed to write to $logpath: $!");
+	close LOG or warning("Failed to close $logpath: $!");
+}
+
+sub find_missing_jobs
+{
+	my $gap = parse_period(shift, $default_gap);
+	my $cronned = find_cronned_jobs($gap);
+	my $logged = find_logged_jobs($gap);
+	return grep { ismissing($_, $logged) } @$cronned;
+}
+
+sub ismissing
+{
+	my $job = shift;
+	my $logged = shift;
+
+	for my $log (@$logged)
+	{
+		# Override user if -U in command as it logs under that user, not root
+		$job->{user} = $1 if !$< && $job->{cmd} =~ /\Q$name\E(?:\+-d\s*[\ddhms]+)*(?:\s+-U\s*([\w.-]+))/;
+		next unless $log->{user} eq $job->{user};
+		next unless substr($log->{time}, 0, -2) eq substr($job->{time}, 0, -2);
+		my $cmdstr = join ' ', @{$log->{cmd}};
+		next if $log->{rc} == -1;
+		next unless $cmdstr eq substr($job->{cmd}, -length($cmdstr));
+		return 0;
+	}
+
+	return 1;
+}
+
+sub find_cronned_jobs
+{
+	my $gap = shift;
+	my @crontab = get_crontab();
+	my $to = time; $to -= $to % 60;
+	my $from = $to - $gap; $from -= $from % 60;
+	my @cronned;
+	print "cronned:\n" if $debug;
+
+	for (my $time = $from; $time <= $to; $time += 60)
+	{
+		my $timestamp = timestamp($time);
+		push @cronned,
+			map { $debug and print "$timestamp host $_->{host} user $_->{user} cmd $_->{cmd}\n"; $_ }
+			map { { time => $timestamp, host => $_->{host}, user => $_->{user}, cmd => $_->{cmd}, env => $_->{env} } }
+			grep { cronned_for($time, $_) }
+			@crontab;
+	}
+
+	print "\n" if $debug;
+	return \@cronned;
+}
+
+sub cronned_for
+{
+	my $time = shift;
+	my $job = shift;
+	my ($second, $minute, $hour, $day, $month, $year, $weekday, $doy, $isdst) = localtime $time;
+	return exists $job->{minute}->{$minute} && exists $job->{hour}->{$hour} && (($job->{daystar} && exists $job->{weekday}->{$weekday}) || ($job->{weekdaystar} && exists $job->{day}->{$day}) || (!$job->{daystar} && !$job->{weekdaystar} && (exists $job->{day}->{$day} || exists $job->{weekday}->{$weekday}))) && exists $job->{month}->{$month + 1};
+}
+
+sub get_crontab
+{
+	return parse_crontab('crontab', scalar `crontab -l`) if $<;
+	my @crontab;
+	push @crontab, parse_crontab($_, scalar `cat $_`) for grep { exists $op{U} ? /\/\Q$op{U}\E$/ : 1 } glob "$cronpath/*";
+	return @crontab;
+}
+
+sub parse_crontab
+{
+	my $fname = shift;
+	my $text = shift;
+	my ($user) = $fname =~ /\/([^\/]+)$/;
+	$user = getpwuid($<) unless defined $user;
+	my $line = 0;
+	my @tab;
+	my $env = {};
+
+	for (split /\n/, $text)
+	{
+		++$line;
+		next if /^#/; next if /^$/;
+		$env->{$1} = $2, next if /^\s*([_a-zA-Z][_a-zA-Z0-9]*)\s*=\s*(.+)\s*$/;
+		push @tab, parse_cronline($user, $fname, $line, $_, { %$env });
+	}
+
+	return @tab;
+}
+
+sub parse_cronline
+{
+	my $user = shift;
+	my $fname = shift;
+	my $line = shift;
+	my $text = shift;
+	my $env = shift;
+	warning("Ignoring environment variable in $fname line $line: $text"), return () if $text =~ /^\s*\S+\s*=/;
+	warning("Ignoring \@reboot directive in $fname line $line: $text"), return () if $text =~ /^\s*\@reboot/i;
+	$text =~ s/^\s*\@(?:yearly|annually)/0 0 1 1 */i;
+	$text =~ s/^\s*\@monthly/0 0 1 * */i;
+	$text =~ s/^\s*\@weekly/0 0 * * 0/i;
+	$text =~ s/^\s*\@(?:daily|midnight)/0 0 * * */i;
+	$text =~ s/^\s*\@hourly/0 * * * */i;
+	my ($minute, $hour, $day, $month, $weekday, $cmd) = $text =~ /([*\d,\/-]+)\s+([*\d,\/-]+)\s+([*\d,\/-]+)\s+([*\d,\/-]+|@{[join '|', keys %month]})\s+([*\d,\/-]+|@{[join '|', keys %weekday]})\s+(.*)\s*$/i;
+	$month = $month{lc $month} if exists $month{lc $month};
+	$weekday = $weekday{lc $weekday} if exists $weekday{lc $weekday};
+	warning("Syntax error in $fname line $line: $text"), return () unless defined $cmd;
+	return () unless $cmd =~ /\Q$name\E/; # Ignore jobs not guarded by noexcuses
+	return () if $cmd =~ /\Q$name\E\s+(-[qv]\s+|-[qv]*[dUH]\s*\S+\s+)*-[hVmwrlpkxMRD]/; # Ignore noexcuses -l commands
+	warning("Cronjob contains shell meta characters: $cmd") if $cmd =~ /[|&;()<>\[\]{}\$\`'~\"\\*?\t\r\n]/;
+	return
+	{
+		host => $hostname,
+		user => $user,
+		minute => expand_cronspec($minute, 0, 59),
+		hour => expand_cronspec($hour, 0, 23),
+		day => expand_cronspec($day, 1, 31),
+		daystar => ($day eq '*' ? 1 : 0),
+		month => expand_cronspec($month, 1, 12),
+		weekday => expand_cronspec($weekday, 0, 6, 7),
+		weekdaystar => ($weekday eq '*' ? 1 : 0),
+		cmd => $cmd,
+		env => $env
+	};
+}
+
+sub expand_cronspec
+{
+	my $spec = shift;
+	my $min = shift;
+	my $max = shift;
+	my $zero = shift;
+	$spec =~ s/(\d+)-(\d+)\/(\d+)/expand_cronstep($1, $2, $3)/eg;
+	$spec =~ s/\*\/(\d+)/expand_cronstep($min, $max, $1)/eg;
+	$spec =~ s/(\d+)-(\d+)/join(',', $1..$2)/eg;
+	$spec =~ s/^(\d+)\/\d$/$1/; # Vixie cron silently does this too
+	$spec =~ s/\*/join(',', $min..$max)/eg;
+	return { map { ($zero && $_ == $zero ? 0 : $_, 1) } split /,/, $spec };
+}
+
+sub expand_cronstep
+{
+	my $start = shift;
+	my $end = shift;
+	my $step = shift;
+	my @values;
+
+	while ($start <= $end)
+	{
+		push @values, $start;
+		$start += $step;
+	}
+
+	return join ',', @values;
+}
+
+sub find_logged_jobs
+{
+	my $gap = shift;
+	my $to = time; $to -= $to % 60;
+	my $from = $to - $gap; $from -= $from % 60;
+	my @logged;
+	my $since = timestamp($from);
+	my $logglob = "$name.$hostname.@{[$< ? $username : exists $op{U} ? $op{U} : '*']}.log";
+	my @logfiles = grep { -f } glob "$spool/$logglob";
+	push @logfiles, grep { -f } glob "$mirror/$logglob" if defined $mirror;
+
+	for my $log (@logfiles)
+	{
+		print "logged:\n" if $debug;
+		open LOG, '<', $log or warning("Failed to open '$log': $!"), next;
+		my $line = 0;
+
+		while (<LOG>)
+		{
+			++$line; s/[\r\n]+$//;
+			my ($time, $host, $user, $delay, $cmd, $rc, $logtime, $note) = $_ =~ /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) host=(\S+) user=(\S+) delay=([\ddhms]+) cmd=«(.*)» rc=(-?\d+) logtime=(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})( # [^«»]+)?$/;
+			warning("Invalid log file entry in $log line $line: $_"), next unless defined $cmd;
+			next unless ($time cmp $since) >= 0;
+			push @logged, { time => $time, host => $host, user => $user, delay => $delay, cmd => [map { decode($_) } split /» «/, $cmd], rc => $rc, logtime => $logtime, note => $note };
+			print "$time host $host user $user delay $delay cmd @{[join ' ', @{$logged[$#logged]->{cmd}}]} rc $rc logtime $logtime@{[defined $note ? $note : '']}\n" if $debug;
+		}
+
+		close LOG;
+	}
+
+	print "\n" if $debug;
+	return \@logged;
+}
+
+sub me
+{
+	my $me = $0;
+	return $me if $me =~ /^\//;
+	return POSIX::getcwd() . '/' . substr($me, 2) if $me =~ /^\.\//;
+	return POSIX::getcwd() . '/' . $me if $me !~ /\//;
+	return $me;
+}
+
+sub isnoexcuse
+{
+	my $pid = shift;
+	my @ps = split /\n/, `$pslp $pid`;
+	return (@ps == 2 && $ps[1] =~ /\Q$name\E/) ? 1 : 0;
+}
+
+sub all_jobs
+{
+	my $dir = shift || $spool;
+	my @jobs;
+
+	for my $state (glob "$dir/$name.$hostname.?????? /var/tmp/$name.$hostname.??????")
+	{
+		my @stat = stat($state) or warning("Failed to stat '$state': $!"), next;
+		next if $< && $< != $stat[4];
+		my $s = parse_state($state, $stat[4]) or next;
+		next if exists $op{U} && $s->{user} ne $op{U};
+		push @jobs, $s;
+	}
+
+	return @jobs;
+}
+
+sub parse_state
+{
+	my $fname = shift;
+	my $uid = shift;
+	open S, '<', $fname or warning("Failed to open '$fname': $!"), return;
+	my $host = <S>;
+	warning("Failed to parse '$fname': Invalid host line"), close(S), return unless defined $host && $host =~ /^host ([a-z0-9.-]+)$/;
+	$host = $1;
+	my $pid = <S>;
+	warning("Failed to parse '$fname': Invalid pid line"), close(S), return unless defined $pid && $pid =~ /^pid ([0-9]+)$/;
+	$pid = $1;
+	my $delay = <S>;
+	warning("Failed to parse '$fname': Invalid delay line"), close(S), return unless defined $delay && $delay =~ /^delay ([0-9]+)$/;
+	$delay = $1;
+	my @cmd;
+	my $env = {};
+
+	while (defined($_ = <S>))
+	{
+		s/[\r\n]+//;
+		$env->{$1} = $2, next if /^env ([_a-zA-Z][_a-zA-Z0-9]*)=(.*)$/;
+		push @cmd, $_;
+	}
+
+	close S;
+	warning("Failed to parse '$fname': Command missing"), return unless @cmd;
+	return { path => $fname, uid => $uid, host => $host, user => getpwuid($uid), pid => $pid, delay => $delay, cmd => [@cmd], env => $env };
+}
+
+sub parse_config
+{
+	my $cfg = shift;
+	open CFG, '<', $cfg or return;
+
+	while (<CFG>)
+	{
+		s/#.*$//, s/\s+$//, s/^\s+//, s/\s+/ /g;
+		next unless length;
+		$delay = $1 if /^delay\s*=\s*(.*)\s*$/i;
+		$spool = $1 if /^spool\s*=\s*(.*)\s*$/i;
+		$mirror = $1 if /^mirror\s*=\s*(.*)\s*$/i;
+		$cronpath = $1 if /^cronpath\s*=\s*(.*)\s*$/i;
+		$pslp = $1 if /^pslp\s*=\s*(.*)\s*$/i;
+		$psfp = $1 if /^psfp\s*=\s*(.*)\s*$/i;
+		$path = $1 if /^path\s*=\s*(.*)\s*$/i;
+		$supath = $1 if /^supath\s*=\s*(.*)\s*$/i;
+	}
+
+	close CFG;
+}
+
+sub parse_period
+{
+	my $period = shift;
+	my $default_period = shift;
+	my $save = $period;
+	my $s = 0;
+	$s += 86400 * $1 if $period =~ /^(\d+)d/i; $period =~ s/^\d+d//i;
+	$s += 3600 * $1 if $period =~ /^(\d+)h/i; $period =~ s/^\d+h//i;
+	$s += 60 * $1 if $period =~ /^(\d+)m/i; $period =~ s/^\d+m//i;
+	$s += $1 if $period =~ /^(\d+)s/i; $period =~ s/^\d+s//i;
+	return $s if $s && $period eq '';
+	warning("Invalid time period: '$save' (continuing with default: $default_period)");
+	return parse_period($default_period, $default_period);
+}
+
+sub unparse_period
+{
+	my $seconds = int shift;
+	my $days = int($seconds / 86400); $seconds -= $days * 86400;
+	my $hours = int($seconds / 3600); $seconds -= $hours * 3600;
+	my $minutes = int($seconds / 60); $seconds -= $minutes * 60;
+	my $duration = "${days}d${hours}h${minutes}m${seconds}s";
+	$duration =~ s/^0d//, $duration =~ s/^0h//, $duration =~ s/^0m//;
+	$duration =~ s/m0s$/m/, $duration =~ s/h0m$/h/, $duration =~ s/d0h$/d/;
+	return $duration;
+}
+
+sub change_user
+{
+	my $uid = shift;
+	my $gid = (getpwuid($uid))[3];
+	$( = $) = "$gid $gid";
+	$< = $> = $uid;
+	die "Failed to change to user $uid: uid=$< euid=$>\n" unless $< eq $uid && $> eq $uid;
+	warning("Failed to completely set groups for user @{[scalar getpwuid($uid)]}: gid=$( egid=$)") unless $( eq "$gid $gid" && $) eq "$gid $gid";
+	init_user();
+}
+
+sub init_user
+{
+	parse_config($config);
+	parse_config((getpwuid($<))[7] . "/.${name}rc");
+	$username = getpwuid($<);
+	$logpath = "$spool/$name.$hostname.$username.log";
+	$logmirror = mirror($logpath) if defined $mirror;
+}
+
+sub daemon
+{
+	my $pid = fork; # Background process to lose session/group leadership
+	warning("Failed to fork: $! (continuing)"), return unless defined $pid;
+	exit if $pid;
+	use POSIX; POSIX::setsid; # Become a process session leader
+	chdir '/'; # Change to the root directory to prevent hampering umounts
+	umask 0; # Clear umask to enable explicit file modes
+	close STDIN; # Point stdin, stdout and stderr to /dev/null just in case
+	close STDOUT;
+	close STDERR;
+	open STDIN, '<', '/dev/null';
+	open STDOUT, '>', '/dev/null';
+	open STDERR, '>', '/dev/null';
+}
+
+sub encode
+{
+	my $s = shift;
+	$s =~ s/(@{[join '|', keys %encoding]})/$encoding{$1}/eg;
+	return $s;
+}
+
+sub decode
+{
+	my $s = shift;
+	$s =~ s/\\(@{[join '|', keys %decoding]})/$decoding{$1}/eg;
+	$s =~ s/\\(.)/$1/g;
+	return $s;
+}
+
+sub timestamp
+{
+	use POSIX; return POSIX::strftime '%Y-%m-%d %H:%M:%S', localtime(shift || time);
+}
+
+sub warning
+{
+	my $msg = shift;
+	warn "$name: $msg\n" unless $quiet;
+}
+
+sub mv
+{
+	my $src = shift;
+	my $dst = shift;
+	if (-d $dst) { my ($fn) = $src =~ /([^\/]+)\/?$/; $dst .= "/$fn" }
+	return (link($src, $dst) || copy_file($src, $dst)) && unlink($src);
+}
+
+sub cp
+{
+	my $src = shift;
+	my $dst = shift;
+	if (-d $dst) { my ($fn) = $src =~ /([^\/]+)\/?$/; $dst .= "/$fn" }
+	return copy_file($src, $dst);
+}
+
+sub copy_file
+{
+	my $src = shift;
+	my $dst = shift;
+	my $kb = shift || 32;
+
+	open SRC, '<', $src or return 0;
+	open DST, '>', $dst or close(SRC), return 0;
+	my $buf;
+
+	while (my $bytes_read = sysread(SRC, $buf, $kb * 1024))
+	{
+		close(SRC), close(DST), unlink($dst), return 0
+			unless defined $bytes_read;
+		last if $bytes_read == 0;
+		my $bytes_written = syswrite(DST, $buf, $bytes_read);
+		close(SRC), close(DST), unlink($dst), return 0
+			unless defined $bytes_written && $bytes_written == $bytes_read;
+	}
+
+	close SRC;
+	close DST;
+	return 1;
+}
+
+# vi:set ts=4 sw=4:
