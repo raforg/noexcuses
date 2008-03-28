@@ -4,7 +4,7 @@ use strict;
 
 # noexcuses - http://raf.org/noexcuses/
 #
-# Copyright (C) 2007 raf <raf@raf.org>
+# Copyright (C) 2008 raf <raf@raf.org>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ use strict;
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 # or visit http://www.gnu.org/copyleft/gpl.html
 #
-# 20070131 raf <raf@raf.org>
+# 20080328 raf <raf@raf.org>
 
 =head1 NAME
 
@@ -406,7 +406,7 @@ option has been used. If the C<-R> option has been used on the other cron
 host, then it should not be used on the original cron host.
 
 In terms of the init script C<noexcuses.init> and its configuration
-C</etc/default.noexcuses.init>, if you use them at all, you can either turn
+C</etc/default/noexcuses.init>, if you use them at all, you can either turn
 on (C<restart> and/or C<recovered>) or (C<relocated> and maybe C<cancel>)
 but not both.
 
@@ -603,12 +603,12 @@ I<daemon(1)>
 
 =head1 AUTHOR
 
-20070131 raf <raf@raf.org>
+20080328 raf <raf@raf.org>
 
 =cut
 
 my $name = 'noexcuses'; # Name of this program
-my $version = '0.1'; # Version of this program
+my $version = '0.2'; # Version of this program
 my $config = "/etc/$name.conf"; # System-wide configuration file
 my $spool = "/var/$name"; # State/log file directory
 my $cronpath = '/var/spool/cron/crontabs'; # Directory containing all crontabs
@@ -824,9 +824,13 @@ sub kill_job
 	my $pid = shift;
 	my @jobs = grep { $pid =~ /all/i || $_->{pid} == $pid } all_jobs();
 	warning(($pid =~ /all/i) ? "No outstanding jobs found" : "Pid $pid not found"), return unless @jobs;
-	kill 'TERM', $_ or warning("Failed to terminate process $_: $!") for map { $_->{pid} } grep { isnoexcuse($_->{pid}) } @jobs;
-	unlink $_ or warning("Failed to rm $_: $!") for map { $_->{path} } @jobs;
-	do { unlink mirror($_) for map { $_->{path} } @jobs } if defined $mirror;
+
+	for (grep { isnoexcuse($_->{pid}) } @jobs)
+	{
+		kill 'TERM', $_->{pid} or warning("Failed to terminate process $_->{pid}: $!"), next;
+		unlink $_->{path} or warning("Failed to remove $_->{path}: $!");
+		unlink mirror($_->{path}) if defined $mirror;
+	}
 }
 
 sub execute_job
@@ -1130,7 +1134,8 @@ sub isnoexcuse
 {
 	my $pid = shift;
 	my @ps = split /\n/, `$pslp $pid`;
-	return (@ps == 2 && $ps[1] =~ /\Q$name\E/) ? 1 : 0;
+	my $shortname = substr $name, 0, 6; # Solaris truncates names
+	return (@ps == 2 && $ps[1] =~ /\Q$shortname\E/) ? 1 : 0;
 }
 
 sub all_jobs

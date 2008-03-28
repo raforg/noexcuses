@@ -20,7 +20,7 @@
 # 10070131 raf <raf@raf.org>
 
 name := noexcuses
-version := 0.1
+version := 0.2
 mansect := 1
 id := $(name)-$(version)
 prefix := /usr

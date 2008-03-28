@@ -76,7 +76,7 @@ COPYING
 ~~~~~~~
 noexcuses - runs cronjobs until they succeed
 
-Copyright (C) 2007 raf <raf@raf.org>
+Copyright (C) 2008 raf <raf@raf.org>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -98,7 +98,11 @@ HISTORY
 0.1 (20070131)
   - Initial version
 
+0.2 (20080328)
+  - Fixed -k bug on Solaris (which truncates process names in ps -l output)
+  - Fixed typo in manpage
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 URL: http://raf.org/noexcuses/
-Date: 20070131
+Date: 20080328
 Author: raf <raf@raf.org>
