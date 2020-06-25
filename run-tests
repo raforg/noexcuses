@@ -1,0 +1,1051 @@
+#!/bin/sh
+
+# run-tests - Test noexcuses
+
+# Create the test directories
+
+pwd="`pwd`"
+test="$pwd/testdir"
+rm -rf $test
+mkdir $test $test/spool $test/mirror $test/cronpath
+chmod 1777 $test/spool $test/mirror
+chmod 1730 $test/cronpath
+
+# Create noexcuses.conf
+
+cat <<EOF > $test/noexcuses.conf
+delay = 10m
+spool = $test/spool
+mirror = $test/mirror
+cronpath = $test/cronpath
+pslong = ps -fp
+psfull = ps -fp
+path = /usr/bin:/bin:
+supath = /usr/bin:/bin:
+EOF
+
+# Create the command to be cronned
+
+cat <<EOF >$test/fail_unless_exists
+#!/bin/sh
+[ -f $test/\$1 ] && exit 0
+exit 1
+EOF
+chmod 755 $test/fail_unless_exists
+
+# Create the crontab
+
+cat <<EOF >$test/cronpath/$USER
+# m h  dom mon dow   command
+1 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists a
+2 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists b
+3 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists c
+4 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists d
+5 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists e
+EOF
+
+# Define helper variables and functions
+
+noexcuses="./noexcuses -C $test/noexcuses.conf"
+version=1.0
+out=$test/output
+num_test=0
+num_skip=0
+num_pass=0
+num_fail=0
+
+# runtest - Show the user the test and run it, sending output to $out.
+# It increments the number of tests, $num_test. It also stores the
+# test command in $test_cmd for later use when a test fails.
+
+runtest()
+{
+	local label="$1" cmd="$2"
+	num_test=`expr $num_test + 1`
+	echo "TEST $1"
+	test_cmd="$cmd"
+	eval $cmd >$out 2>&1
+}
+
+# skiptest - Skip a test
+# It increments the number of skipped tests, $num_skip.
+
+skiptest()
+{
+	local label="$1" reason="$2"
+	num_skip=`expr $num_skip + 1`
+	echo "SKIP $1 [Skipped because $reason]"
+}
+
+# ok - Evaluate the contents of the file named $out
+#
+# Each argument is a perl regexp except that the new
+# pattern \n can be a literal newline which will be
+# translated into the perl re newline pattern before
+# being given to perl.
+#
+# If all of the patterns match, it increments the
+# number of passing tests ($num_pass).
+# If any of the patterns don't match, it increments
+# the number of failing tests ($num_fail), and echoes FAIL.
+
+ok()
+{
+	local desc="$1"; shift
+	local ret=0
+	for pattern in "$@"
+	do
+		pattern="`echo \"$pattern\" | perl -e '$/ = undef; $_ = <>; print join(\"\\n\", split(/\\n/));'`"
+		perl -e "$/ = undef; my \$pat = qr/$pattern/; exit((<> =~ \$pat) ? 0 : 1);" $out || ret=1
+	done
+	if [ $ret = 0 ]
+	then
+		num_pass=`expr $num_pass + 1`
+	else
+		num_fail=`expr $num_fail + 1`
+		showfailure "$desc"
+	fi
+}
+
+# okempty - Like ok but only tests that the $out file is empty
+
+okempty()
+{
+	if [ ! -s $out ]
+	then
+		num_pass=`expr $num_pass + 1`
+	else
+		num_fail=`expr $num_fail + 1`
+		showfailure "Should produce no output"
+	fi
+}
+
+# okemptyor - Like okempty || ok (but only counts as one test)
+
+okemptyor()
+{
+	if [ ! -s $out ]
+	then
+		num_pass=`expr $num_pass + 1`
+	else
+		ok "$@"
+	fi
+}
+
+# showfailure - Show failures, called by ok and okemptyor
+
+showfailure()
+{ 
+	local explanation="$1"
+	echo $test_cmd
+	echo $explanation
+	echo ....................................................................
+	cat $out
+	echo ....................................................................
+	echo FAIL
+	echo
+}
+
+# results - Show the user a summary of the test results and exit accordingly
+
+results()
+{
+	if [ $num_pass = $num_test ]
+	then
+		echo "All $num_test tests passed"
+	elif [ $num_fail = $num_test ]
+	then
+		echo "All $num_test tests failed"
+	else
+		echo "$num_pass/$num_test tests passed"
+		echo "$num_fail tests failed"
+	fi
+	[ $num_skip -eq 1 ] && echo "$num_skip test skipped"
+	[ $num_skip -gt 1 ] && echo "$num_skip tests skipped"
+	exit $num_fail
+}
+
+# delay - Like sleep(1) but with floating point argument
+
+delay()
+{
+	local delay="${1:-0.25}"
+	perl -e "select(undef, undef, undef, $delay)"
+}
+
+# Perform tests
+
+# Test -h --help -V --version options
+
+runtest "Help -h" "$noexcuses -h" "$noexcuses -h 2>&1 | head -10"
+ok "Should produce 10 lines of the help message" \
+'^usage: noexcuses \[options\] \[--\] cmd args\.\.\.' \
+'options:' \
+'-h, --help\s+- Print the help message then exit'
+
+runtest "Help --help" "$noexcuses --help 2>&1 | head -10"
+ok "Should produce 10 lines of the help message" \
+'^usage: noexcuses \[options\] \[--\] cmd args\.\.\.' \
+'options:' \
+'-h, --help\s+- Print the help message then exit'
+
+runtest "Version -V" "$noexcuses -V"
+ok "Should produce the version message" "noexcuses-$version"
+
+runtest "Version --version" "$noexcuses --version"
+ok "Should produce the version message" "noexcuses-$version"
+
+# Test -m -w -r options
+
+runtest "Manpage -m" "$noexcuses -m 2>&1 | head -10"
+ok "Should produce 10 lines of the manpage" \
+'^NOEXCUSES\(1\)\s+USER COMMANDS\s+NOEXCUSES\(1\)' \
+'noexcuses .* runs important cronjobs until they succeed'
+
+runtest "Manpage HTML -w" "$noexcuses -w 2>&1 | head -10"
+ok "Should produce 10 lines of the manpage in HTML format" \
+'DOCTYPE html PUBLIC' '<title>noexcuses\(1\)<\/title>'
+
+runtest "Manpage nroff -r" "$noexcuses -r 2>&1 | head -10"
+ok "Should produce 10 lines of the manpage in nroff format" \
+'Automatically generated by Pod::Man' 'Standard preamble'
+
+# Test -l -p -x -c -v options when there's nothing to do
+
+runtest "List -l when there's nothing" "$noexcuses -l"
+okempty
+
+runtest "Run ps -p when there's nothing" "$noexcuses -p"
+okempty
+
+runtest "Execute -x pid when it's not there" "$noexcuses -x 65535"
+ok "Should produce 'noexcuses: Pid 65535 not found'" \
+'^noexcuses: Pid 65535 not found$'
+
+runtest "Execute -x pid (with -v) when it's not there" "$noexcuses -x 65535 -v"
+ok "Should produce 'noexcuses: Pid 65535 not found'" \
+'^noexcuses: Pid 65535 not found$'
+
+runtest "Execute -x all when there's nothing" "$noexcuses -x all"
+ok "Should produce 'noexcuses: No outstanding jobs found'" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "Execute -x all (with -v) when there's nothing" "$noexcuses -x all -v"
+ok "Should produce 'noexcuses: No outstanding jobs found'" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "Cancel -c pid when it's not there" "$noexcuses -c 65535"
+ok "Should produce 'noexcuses: Pid 65535 not found'" \
+'^noexcuses: Pid 65535 not found$'
+
+runtest "Cancel -c pid (with -v) when it's not there" "$noexcuses -c 65535 -v"
+ok "Should produce 'noexcuses: Pid 65535 not found'" \
+'^noexcuses: Pid 65535 not found$'
+
+runtest "Cancel -c all when there's nothing" "$noexcuses -c all"
+ok "Should produce 'noexcuses: No outstanding jobs found'" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "Cancel -c all (with -v) when there's nothing" "$noexcuses -c all -v"
+ok "Should produce 'noexcuses: No outstanding jobs found'" \
+'^noexcuses: No outstanding jobs found$'
+
+# Test -l -p when there is something to do
+# Test -x when it's unsuccessful (with and without -v)
+
+echo "START fail_unless_exists 1 (to test -l -p and unsuccessful -x with and without -v)"
+$noexcuses $test/fail_unless_exists 1
+
+runtest "List -l when there's something" "$noexcuses -l"
+ok "Should produce one line of output ending in 'fail_unless_exists 1'" \
+'^pid \d+: noexcuses .*fail_unless_exists 1$'
+
+runtest "Run ps -p when there's something" "$noexcuses -p"
+ok "Should produce ps header line and one more line of output ending in 'fail_unless_exists 1'" \
+'PID\s+.*CMD' 'fail_unless_exists 1'
+
+runtest "Execute -x all unsuccessfully when there's something" "$noexcuses -x all"
+okempty
+
+runtest "Execute -x all unsuccessfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists 1'" \
+'^Executing: .*fail_unless_exists 1$'
+
+echo "KILL fail_unless_exists 1"
+pid=`$noexcuses -l | perl -ne '/^pid (\d+):/ && print("$1\n")'`
+[ -n "$pid" ] && kill -9 $pid
+
+runtest "Run ps -p when there's something but process killed" "$noexcuses -p"
+ok "Should produce ps header line only'" \
+'PID\s+.*CMD'
+
+echo "DELETE logs"
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+runtest "Execute -x all unsuccessfully (with -v) when there's something but noexcuses process is dead" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists 1'" \
+'^Executing: .*fail_unless_exists 1$'
+
+delay
+runtest "Run ps -p when there's something and process replaced" "$noexcuses -p"
+ok "Should produce ps header line and one more line of output ending in 'fail_unless_exists 1'" \
+'PID\s+.*CMD' 'fail_unless_exists 1'
+
+# Test -x when it's successful (without -v)
+# Test -l -p when there are no longer any jobs
+
+echo "CREATE 1 (so job can succeed)"
+touch $test/1
+
+runtest "Execute -x all successfully (without -v) when there's something" "$noexcuses -x all"
+okemptyor "Should produce no output (or possibly 'noexcuses: No outstanding jobs found')" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "List -l when there's nothing again" "$noexcuses -l"
+okempty
+
+runtest "Run ps -p when there's nothing again" "$noexcuses -p"
+okempty
+
+echo DELETE 1
+rm -r $test/1
+
+# Test -x when it's successful (with -v)
+
+echo "START fail_unless_exists 2 (to test successful -x with -v)"
+$noexcuses $test/fail_unless_exists 2
+
+echo "CREATE 2 (so job can succeed)"
+touch $test/2
+
+runtest "Execute -x all successfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists 2'" \
+'^Executing: .*fail_unless_exists 2$'
+
+runtest "List -l when there's nothing again" "$noexcuses -l"
+okempty
+
+runtest "Run ps -p when there's nothing again" "$noexcuses -p"
+okempty
+
+echo DELETE 2
+rm -r $test/2
+
+# Test -c without -v
+
+echo "START fail_unless_exists 3 (to test -c without -v)"
+$noexcuses $test/fail_unless_exists 3
+
+runtest "List -l when there's something" "$noexcuses -l"
+ok "Should produce one line of output ending in 'fail_unless_exists 3'" \
+'^pid \d+: .*fail_unless_exists 3$'
+
+runtest "Cancel -c all when there's something" "$noexcuses -c all"
+okempty
+
+runtest "List -l when there's nothing again" "$noexcuses -l"
+okempty
+
+# Test -c with -v
+
+echo "START fail_unless_exists 4 (to test -c with -v)"
+$noexcuses $test/fail_unless_exists 4
+
+runtest "List -l when there's something" "$noexcuses -l"
+ok "Should produce one line of output ending in 'fail_unless_exists 4'" \
+'^pid \d+: .*fail_unless_exists 4$'
+
+runtest "Cancel -c all (with -v) when there's something" "$noexcuses -c all -v"
+ok "Should produce something like 'Cancelling: ...'" \
+'^Cancelling: \d+$'
+
+runtest "List -l when there's nothing again" "$noexcuses -l"
+okempty
+
+# Test -M (with and without -D)
+
+runtest "Missing -M when all jobs are missing" "$noexcuses -M 1d"
+ok "Should produce 5 jobs (12.01am a, 12.02am b, 12.03am c, 12.04am d, 12.05am e)" \
+'^\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a
+\d{4}-\d{2}-\d{2} 00:02:00 host .* user .* cmd .*fail_unless_exists b
+\d{4}-\d{2}-\d{2} 00:03:00 host .* user .* cmd .*fail_unless_exists c
+\d{4}-\d{2}-\d{2} 00:04:00 host .* user .* cmd .*fail_unless_exists d
+\d{4}-\d{2}-\d{2} 00:05:00 host .* user .* cmd .*fail_unless_exists e$'
+
+runtest "Missing -M with debug -D when all jobs are missing" "$noexcuses -M 1d -D"
+ok "Should produce 5 cronned jobs (12.01am a, 12.02am b, 12.03am c, 12.04am d, 12.05am e, 4 logged jobs from the spool (1 2 3 4), 4 logged jobs from the mirror (same), and 5 missing jobs (same as cronned))" \
+'^Cronned:
+\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a
+\d{4}-\d{2}-\d{2} 00:02:00 host .* user .* cmd .*fail_unless_exists b
+\d{4}-\d{2}-\d{2} 00:03:00 host .* user .* cmd .*fail_unless_exists c
+\d{4}-\d{2}-\d{2} 00:04:00 host .* user .* cmd .*fail_unless_exists d
+\d{4}-\d{2}-\d{2} 00:05:00 host .* user .* cmd .*fail_unless_exists e
+
+Logged .*spool.*:
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 1 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 2 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 3 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 4 rc .* logtime .*
+
+Logged .*mirror.*:
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 1 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 2 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 3 rc .* logtime .*
+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} host .* user .* config .* delay .* cmd .*fail_unless_exists 4 rc .* logtime .*
+
+Missing:
+\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a
+\d{4}-\d{2}-\d{2} 00:02:00 host .* user .* cmd .*fail_unless_exists b
+\d{4}-\d{2}-\d{2} 00:03:00 host .* user .* cmd .*fail_unless_exists c
+\d{4}-\d{2}-\d{2} 00:04:00 host .* user .* cmd .*fail_unless_exists d
+\d{4}-\d{2}-\d{2} 00:05:00 host .* user .* cmd .*fail_unless_exists e
+$'
+
+echo "DELETE logs"
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test -R with -D and -v
+
+runtest "Recover -R with debug -D and verbose -v" "$noexcuses -R 1d -D -v"
+ok "Should produce 5 cronned jobs (12.01am a, 12.02am b, 12.03am c, 12.04am d, 12.05am e), 0 logged jobs from the spool, 0 logged jobs from the mirror, and 5 \"Recovering: ...\" lines (a b c d e)" \
+'^Cronned:
+\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a
+\d{4}-\d{2}-\d{2} 00:02:00 host .* user .* cmd .*fail_unless_exists b
+\d{4}-\d{2}-\d{2} 00:03:00 host .* user .* cmd .*fail_unless_exists c
+\d{4}-\d{2}-\d{2} 00:04:00 host .* user .* cmd .*fail_unless_exists d
+\d{4}-\d{2}-\d{2} 00:05:00 host .* user .* cmd .*fail_unless_exists e
+
+Recovering: .*noexcuses.*fail_unless_exists a
+Recovering: .*noexcuses.*fail_unless_exists b
+Recovering: .*noexcuses.*fail_unless_exists c
+Recovering: .*noexcuses.*fail_unless_exists d
+Recovering: .*noexcuses.*fail_unless_exists e$'
+
+delay
+runtest "List -l the recovered jobs" "$noexcuses -l"
+ok "Should produce 5 jobs (a b c d e)" \
+'^pid \d+: noexcuses .*fail_unless_exists a
+pid \d+: noexcuses .*fail_unless_exists b
+pid \d+: noexcuses .*fail_unless_exists c
+pid \d+: noexcuses .*fail_unless_exists d
+pid \d+: noexcuses .*fail_unless_exists e$'
+
+echo "CREATE a b c d e (so job can succeed)"
+touch $test/a $test/b $test/c $test/d $test/e
+
+runtest "Execute -x all successfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists ...' (a b c d e)'" \
+'^Executing: .*fail_unless_exists a
+Executing: .*fail_unless_exists b
+Executing: .*fail_unless_exists c
+Executing: .*fail_unless_exists d
+Executing: .*fail_unless_exists e$'
+
+delay
+runtest "List -l after the recovered jobs have completed" "$noexcuses -l"
+okempty
+
+echo "DELETE a b c d e logs"
+rm -f $test/[abcde]
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test -R with -D but not -v
+
+runtest "Recover -R with debug -D but not verbose -v" "$noexcuses -R 1d -D"
+ok "Should produce 5 cronned jobs (12.01am a, 12.02am b, 12.03am c, 12.04am d, 12.05am e), 0 logged jobs from the spool, 0 logged jobs from the mirror, no verbose \"Recovering\" messages" \
+'^Cronned:
+\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a
+\d{4}-\d{2}-\d{2} 00:02:00 host .* user .* cmd .*fail_unless_exists b
+\d{4}-\d{2}-\d{2} 00:03:00 host .* user .* cmd .*fail_unless_exists c
+\d{4}-\d{2}-\d{2} 00:04:00 host .* user .* cmd .*fail_unless_exists d
+\d{4}-\d{2}-\d{2} 00:05:00 host .* user .* cmd .*fail_unless_exists e
+$'
+
+delay
+runtest "List -l the recovered jobs" "$noexcuses -l"
+ok "Should produce 5 jobs (a b c d e)" \
+'^pid \d+: noexcuses .*fail_unless_exists a
+pid \d+: noexcuses .*fail_unless_exists b
+pid \d+: noexcuses .*fail_unless_exists c
+pid \d+: noexcuses .*fail_unless_exists d
+pid \d+: noexcuses .*fail_unless_exists e$'
+
+echo "CREATE a b c d e (so job can succeed)"
+touch $test/a $test/b $test/c $test/d $test/e
+
+runtest "Execute -x all successfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists ...' (a b c d e)'" \
+'^Executing: .*fail_unless_exists a
+Executing: .*fail_unless_exists b
+Executing: .*fail_unless_exists c
+Executing: .*fail_unless_exists d
+Executing: .*fail_unless_exists e$'
+
+delay
+runtest "List -l after the recovered jobs have completed" "$noexcuses -l"
+okempty
+
+echo "DELETE a b c d e logs"
+rm -f $test/[abcde]
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test -R with -v but not -D
+
+runtest "Recover -R without -D but with verbose -v" "$noexcuses -R 1d -v"
+ok "Should produce 5 \"Recovering: ...\" lines (a b c d e)" \
+'^Recovering: .*fail_unless_exists a
+Recovering: .*fail_unless_exists b
+Recovering: .*fail_unless_exists c
+Recovering: .*fail_unless_exists d
+Recovering: .*fail_unless_exists e$'
+
+delay
+runtest "List -l the recovered jobs" "$noexcuses -l"
+ok "Should produce 5 jobs (a b c d e)" \
+'^pid \d+: noexcuses .*fail_unless_exists a
+pid \d+: noexcuses .*fail_unless_exists b
+pid \d+: noexcuses .*fail_unless_exists c
+pid \d+: noexcuses .*fail_unless_exists d
+pid \d+: noexcuses .*fail_unless_exists e$'
+
+echo "CREATE a b c d e (so job can succeed)"
+touch $test/a $test/b $test/c $test/d $test/e
+
+runtest "Execute -x all successfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists ...' (a b c d e)'" \
+'^Executing: .*fail_unless_exists a
+Executing: .*fail_unless_exists b
+Executing: .*fail_unless_exists c
+Executing: .*fail_unless_exists d
+Executing: .*fail_unless_exists e$'
+
+delay # This is time-dependant
+runtest "List -l after the recovered jobs have completed" "$noexcuses -l"
+okempty
+
+echo "DELETE a b c d e logs"
+rm -f $test/[abcde]
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test -R without -v or -D
+
+runtest "Recover -R without debug -D or verbose -v" "$noexcuses -R 1d"
+okempty
+
+delay
+runtest "List -l the recovered jobs" "$noexcuses -l"
+ok "Should produce 5 jobs (a b c d e)" \
+'^pid \d+: noexcuses .*fail_unless_exists a
+pid \d+: noexcuses .*fail_unless_exists b
+pid \d+: noexcuses .*fail_unless_exists c
+pid \d+: noexcuses .*fail_unless_exists d
+pid \d+: noexcuses .*fail_unless_exists e$'
+
+echo "CREATE a b c d e (so job can succeed)"
+touch $test/a $test/b $test/c $test/d $test/e
+
+runtest "Execute -x all successfully (with -v) when there's something" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists ...' (a b c d e)'" \
+'^Executing: .*fail_unless_exists a
+Executing: .*fail_unless_exists b
+Executing: .*fail_unless_exists c
+Executing: .*fail_unless_exists d
+Executing: .*fail_unless_exists e$'
+
+delay
+runtest "List -l after the recovered jobs have completed" "$noexcuses -l"
+okempty
+
+echo "DELETE a b c d e logs"
+rm -f $test/[abcde]
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test Adopt -A
+
+# Start a job, kill its noexcuses process, then rename files
+# to make it look like it was from another cron host.
+
+echo "START fail_unless_exists other (to test -A)"
+$noexcuses $test/fail_unless_exists other
+delay
+echo "KILL fail_unless_exists other"
+pid=`$noexcuses -l | perl -ne '/^pid (\d+):/ && print("$1\n")'`
+[ -n "$pid" ] && kill -9 $pid
+hostname="`hostname | sed -e 's/\..*$//'`"
+other_hostname="${hostname}1"
+
+runtest "Adopt -A when it looks like the mirror directory isn't mounted" "$noexcuses -A $other_hostname"
+ok "Should contain: 'noexcuses: Mirror directory doesn't look mounted, or nothing mirrored (Aborting)'" \
+"^noexcuses: Mirror directory doesn't look mounted, or nothing mirrored \(Aborting\)$"
+
+# Make it look like files in mirror are from another cron host
+rm -f $test/spool/noexcuses.$hostname.* # This host can't see the other host's spool
+for fname in $test/mirror/noexcuses.*   # But it can see its mirror
+do
+	newfname="`echo $fname | perl -pe 's/noexcuses\.'$hostname'\./noexcuses\.'$other_hostname'\./'`"
+	mv $fname $newfname
+done
+perl -pi -e 's/ host='$hostname' / host='$other_hostname' /' $test/mirror/noexcuses.$other_hostname.*.log
+perl -pi -e 's/^host '$hostname'$/host '$other_hostname'/m' $test/mirror/noexcuses.$other_hostname.state.*
+
+runtest "Adopt -A with -v" "$noexcuses -v -A $other_hostname"
+ok "Should contain: 'Adopting: .../fail_unless_exists other'" \
+'^Adopting: .*fail_unless_exists other$'
+
+runtest "Execute -x all (unsuccessfully) with -v after adopting" "$noexcuses -x all -v"
+ok "Should contain: Executing: .../fail_unless_exists other" \
+'^Executing: .*fail_unless_exists other$'
+
+runtest "List -l after adopting and executing (unsuccessfully)" "$noexcuses -l"
+ok "Should produce one line of output ending in 'fail_unless_exists other'" \
+'^pid \d+: noexcuses .*fail_unless_exists other$'
+
+runtest "Run ps -p after adopting and executing (unsuccessfully)" "$noexcuses -p"
+ok "Should produce ps header line and one more line of output ending in 'fail_unless_exists other'" \
+'PID\s+.*CMD' 'fail_unless_exists other'
+
+echo "CREATE other"
+touch $test/other
+
+runtest "Execute -x all (successfully) with -v after adopting" "$noexcuses -v -x all"
+ok "Should contain: Adopting: .../fail_unless_exists other" \
+'^Executing: .*fail_unless_exists other$'
+
+echo DELETE other
+rm $test/other
+
+runtest "List -l after adopting and executing (successfully)" "$noexcuses -l"
+okempty
+
+runtest "Run ps -p after adopting and executing (successfully)" "$noexcuses -p"
+okempty
+
+runtest "Recover -R with -H and -v after adopting" "$noexcuses -H $other_hostname -R 1d -v"
+ok "Should produce 5 \"Recovering: ...\" lines (a b c d e)" \
+'^Recovering: .*fail_unless_exists a' \
+'Recovering: .*fail_unless_exists b' \
+'Recovering: .*fail_unless_exists c' \
+'Recovering: .*fail_unless_exists d' \
+'Recovering: .*fail_unless_exists e$'
+
+runtest "List -l after remote recovery" "$noexcuses -l"
+ok "Should produce 5 jobs (a b c d e)" \
+'^pid \d+: noexcuses .*fail_unless_exists a' \
+'pid \d+: noexcuses .*fail_unless_exists b' \
+'pid \d+: noexcuses .*fail_unless_exists c' \
+'pid \d+: noexcuses .*fail_unless_exists d' \
+'pid \d+: noexcuses .*fail_unless_exists e$'
+
+echo "CREATE a b c d e"
+touch $test/a $test/b $test/c $test/d $test/e
+
+runtest "Execute -x with -v after remote recovery" "$noexcuses -x all -v"
+ok "Should produce something like 'Executing: ...fail_unless_exists ...' (a b c d e)'" \
+'^Executing: .*fail_unless_exists a' \
+'Executing: .*fail_unless_exists b' \
+'Executing: .*fail_unless_exists c' \
+'Executing: .*fail_unless_exists d' \
+'Executing: .*fail_unless_exists e$'
+
+delay
+runtest "List -l after the remote recovered jobs have completed" "$noexcuses -l"
+okempty
+
+echo "DELETE a b c d e logs"
+rm -f $test/[abcde]
+rm -r $test/spool/noexcuses.*.*.log
+rm -r $test/mirror/noexcuses.*.*.log
+
+# Test Forget -F
+
+runtest "Cancel/Forget -F when it looks like the mirror directory isn't mounted" "$noexcuses -F -v"
+ok "Should contain: 'noexcuses: Mirror directory doesn't look mounted, or nothing mirrored (Aborting)'" \
+"^noexcuses: Mirror directory doesn't look mounted, or nothing mirrored \(Aborting\)$"
+
+# Start a job, kill its noexcuses process, then delete the mirrored
+# state to make it look like it was adopted by another cron host.
+
+echo "START fail_unless_exists other (to test -F)"
+$noexcuses $test/fail_unless_exists other
+delay
+echo "KILL fail_unless_exists other"
+pid=`$noexcuses -l | perl -ne '/^pid (\d+):/ && print("$1\n")'`
+[ -n "$pid" ] && kill -9 $pid
+hostname="`hostname | sed -e 's/\..*$//'`"
+other_hostname="${hostname}1"
+
+rm -f $test/mirror/noexcuses.$hostname.state.??????
+
+runtest "Cancel/Forget (-F) with -v after job adopted by another host" "$noexcuses -F -v"
+ok "Should contain: Forgetting: ...fail_unless_exists other" \
+'^Forgetting: .*fail_unless_exists other$'
+
+runtest "List -l after forget" "$noexcuses -l"
+okempty
+
+# Test User -U with a command (not recommended) and with -l -p -x -c
+
+if [ "$LOGNAME" = root ]
+then
+	other_user="nobody"
+	runtest "Root user using -U to run a command" "$noexcuses -U $other_user $test/fail_unless_exists a"
+	okempty
+
+	runtest "Root user using -U with -l" "$noexcuses -U $other_user -l"
+	ok "Should produce one line of output ending in 'fail_unless_exists a'" \
+	'^pid \d+: noexcuses .*fail_unless_exists a$'
+
+	runtest "Root user using -U with -p" "$noexcuses -U $other_user -p"
+	ok "Should produce ps header line and one more line of output ending in 'fail_unless_exists a'" \
+	'PID\s+.*CMD' 'fail_unless_exists a'
+
+	runtest "Root user using -U with -x all (unsuccessfully) and -v" "$noexcuses -U $other_user -x all -v"
+	ok "Should produce something like 'Executing: ...fail_unless_exists a'" \
+	'^Executing: .*fail_unless_exists a$'
+
+	echo "KILL fail_unless_exists a"
+	pid=`$noexcuses -U $other_user -l | perl -ne '/^pid (\d+):/ && print("$1\n")'`
+	[ -n "$pid" ] && kill -9 $pid
+
+	runtest "Root user using -U with -p but process killed" "$noexcuses -U $other_user -p"
+	ok "Should produce ps header line only" \
+	'PID\s+.*CMD'
+
+	runtest "Root user using -U with -x all when noexcuses process killed and -v" "$noexcuses -U $other_user -x all -v"
+	ok "Should produce something like 'Executing: ...fail_unless_exists a'" \
+	'^Executing: .*fail_unless_exists a$'
+
+	runtest "Root user using -U with -l" "$noexcuses -U $other_user -l"
+	ok "Should produce one line of output ending in 'fail_unless_exists a'" \
+	'^pid \d+: noexcuses .*fail_unless_exists a$'
+
+	delay
+	runtest "Root user using -U with -p and process replaced" "$noexcuses -U $other_user -p"
+	ok "Should produce ps header line and one more line of output ending in 'fail_unless_exists a'" \
+	'PID\s+.*CMD' 'fail_unless_exists a'
+
+	runtest "Root user using -U with -c all and -v" "$noexcuses -U $other_user -c all -v"
+	ok "Should produce something like 'Cancelling: ...'" \
+	'^Cancelling: \d+$'
+
+	runtest "Root user using -U with -l when there's nothing" "$noexcuses -U $other_user -l"
+	okempty
+else
+	skiptest "Root user using -U to run a command" "not root"
+	skiptest "Root user using -U with -l" "not root"
+	skiptest "Root user using -U with -p" "not root"
+	skiptest "Root user using -U with -x all (unsuccessfully) and -v" "not root"
+	skiptest "Root user using -U with -p but process killed" "not root"
+	skiptest "Root user using -U with -l" "not root"
+	skiptest "Root user using -U with -c all and -v" "not root"
+	skiptest "Root user using -U with -p and process replaced" "not root"
+	skiptest "Root user using -U with -l when there's nothing" "not root"
+fi
+
+# Test -q
+
+runtest "Cancel -c all without -q with nothing to cancel" "$noexcuses -c all"
+ok "Should contain: noexcuses: No outstanding jobs found" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "Cancel -c all with -q with nothing to cancel" "$noexcuses -c all -q"
+okempty
+
+runtest "Execute -x all without -q with nothing to cancel" "$noexcuses -x all"
+ok "Should contain: noexcuses: No outstanding jobs found" \
+'^noexcuses: No outstanding jobs found$'
+
+runtest "Cancel -c with -q with nothing to cancel" "$noexcuses -x all -q"
+okempty
+
+rm -f $test/mirror/*
+
+runtest "Adopt -A without -q with nothing in mirror" "$noexcuses -A $other_hostname"
+ok "Should contain: noexcuses: Mirror directory doesn't look mounted, or nothing mirrored (Aborting)" \
+"^noexcuses: Mirror directory doesn't look mounted, or nothing mirrored \(Aborting\)$"
+
+runtest "Adopt -A with -q with nothing in mirror" "$noexcuses -A $other_hostname -q"
+okempty
+
+runtest "Forget -F without -q with nothing in mirror" "$noexcuses -F $other_hostname"
+ok "Should contain: noexcuses: Mirror directory doesn't look mounted, or nothing mirrored (Aborting)" \
+"^noexcuses: Mirror directory doesn't look mounted, or nothing mirrored \(Aborting\)$"
+
+runtest "Forget -F with -q with nothing in mirror" "$noexcuses -F -q"
+okempty
+
+runtest "Invalid -d option without -q" "$noexcuses -d XYZ true"
+ok "Should contain: noexcuses: Invalid time period for delay: 'XYZ' (continuing with default: 1h)" \
+"^noexcuses: Invalid time period for delay: 'XYZ' \(continuing with default: 1h\)$"
+
+runtest "Invalid -d option with -q" "$noexcuses -d XYZ -q true"
+okempty
+
+cat <<EOF >$test/cronpath/$USER
+VAR=val
+123=err
+@reboot true
+# m h  dom mon dow   command
+syntax error line
+1 0 * * * $pwd/noexcuses -C $test/noexcuses.conf $test/fail_unless_exists a && yes || echo no
+EOF
+
+runtest "Crontab parse errors without -q" "$noexcuses -M 1d"
+ok "Should contain 4 warning messages and a cronjob ending with: fail_unless_exists a && echo yes || echo no" \
+'^noexcuses: Ignoring invalid environment variable in .* line 2: 123=err
+noexcuses: Ignoring \@reboot directive in .* line 3: \@reboot true
+noexcuses: Syntax error in crontab .* line 5: syntax error line
+noexcuses: Cronjob in .* contains shell meta-characters: .*fail_unless_exists a \&\& yes \|\| echo no
+\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a \&\& yes \|\| echo no$'
+
+runtest "Crontab parse errors with -q" "$noexcuses -M 1d -q"
+ok "Should contain a cronjob ending with: fail_unless_exists a && yes || echo no" \
+'^\d{4}-\d{2}-\d{2} 00:01:00 host .* user .* cmd .*fail_unless_exists a \&\& yes \|\| echo no$'
+
+# Test errors for mutually exclusive command line option argument
+
+runtest "Mutually exclusive command line options: -l and -p" "$noexcuses -l -p"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -x all" "$noexcuses -l -x all"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -c all" "$noexcuses -l -c all"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -A host" "$noexcuses -l -A host"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -F" "$noexcuses -l -F"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -M 1d" "$noexcuses -l -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -l and -R 1d" "$noexcuses -l -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -x all" "$noexcuses -p -x all"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -c all" "$noexcuses -p -c all"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -A host" "$noexcuses -p -A host"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -F" "$noexcuses -p -F"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -M 1d" "$noexcuses -p -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -p and -R 1d" "$noexcuses -p -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -x all and -c all" "$noexcuses -x all -c all"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -x all and -A host" "$noexcuses -x all -A host"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -x all and -F" "$noexcuses -x all -F"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -x all and -M 1d" "$noexcuses -x all -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -x all and -R 1d" "$noexcuses -x all -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -c all and -A host" "$noexcuses -c all -A host"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -c all and -F" "$noexcuses -c all -F"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -c all and -M 1d" "$noexcuses -c all -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -c all and -R 1d" "$noexcuses -c all -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -A host and -F" "$noexcuses -A host -F"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -A host and -M 1d" "$noexcuses -A host -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -A host and -R 1d" "$noexcuses -A host -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -F and -M 1d" "$noexcuses -F -M 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -F and -R 1d" "$noexcuses -F -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+runtest "Mutually exclusive command line options: -M 1d and -R 1d" "$noexcuses -M 1d -R 1d"
+ok "Should contain: The -l -p -x -c -A -F -M and -R options are mutually exclusive" \
+'^The -l -p -x -c -A -F -M and -R options are mutually exclusive' \
+'usage: noexcuses'
+
+# Test other command line option errors
+
+runtest "The -D option without -M or -R" "$noexcuses -D"
+ok "Should contain: The -D option requires either the -M or -R option" \
+'^The -D option requires either the -M or -R option' \
+'usage: noexcuses'
+
+runtest "The -x option with an invalid argument" "$noexcuses -x ABC"
+ok "Should contain: Invalid -x option argument: ABC (Must be a pid or \"all\")" \
+'^Invalid -x option argument: ABC \(Must be a pid or "all"\)' \
+'usage: noexcuses'
+
+runtest "The -x option with an invalid argument" "$noexcuses -x 999999999999"
+ok "Should contain: Invalid -x option argument: 999999999999 (Must be a pid or \"all\")" \
+'^Invalid -x option argument: 999999999999 \(Must be a pid or "all"\)' \
+'usage: noexcuses'
+
+runtest "The -c option with an invalid argument" "$noexcuses -c ABC"
+ok "Should contain: Invalid -c option argument: ABC (Must be a pid or \"all\")" \
+'^Invalid -c option argument: ABC \(Must be a pid or "all"\)' \
+'usage: noexcuses'
+
+runtest "The -c option with an invalid argument" "$noexcuses -c 999999999999"
+ok "Should contain: Invalid -c option argument: 999999999999 (Must be a pid or \"all\")" \
+'^Invalid -c option argument: 999999999999 \(Must be a pid or "all"\)' \
+'usage: noexcuses'
+
+runtest "The -H option with an invalid argument" "$noexcuses -H ."
+ok "Should contain: Invalid -H option argument:  (Must contain only alphanumerics and dash)" \
+'^Invalid -H option argument:  \(Must contain only alphanumerics and dash\)' \
+'usage: noexcuses'
+
+runtest "The -H option with an invalid argument" "$noexcuses -H _"
+ok "Should contain: Invalid -H option argument: _ (Must contain only alphanumerics and dash)" \
+'^Invalid -H option argument: _ \(Must contain only alphanumerics and dash\)' \
+'usage: noexcuses'
+
+runtest "The -A with an invalid option argument" "$noexcuses -A $hostname"
+ok "Should contain: Invalid -A option argument: $hostname (Must be the name of a different host)" \
+'^Invalid -A option argument: .* \(Must be the name of a different host\)' \
+'usage: noexcuses'
+
+if [ "$LOGNAME" != root ]
+then
+	runtest "Non-root user using -U option for self (redundant)" "$noexcuses -U $LOGNAME true"
+	okempty
+else
+	skiptest "Non-root user using -U option for self (redundant)" "root"
+fi
+
+if [ "$LOGNAME" != root ]
+then
+	runtest "Non-root user using -U option for other (invalid)" "$noexcuses -U $LOGNAME$LOGNAME true"
+	ok "Should contain: The -U option may only be used by root" \
+	'^The -U option may only be used by root' \
+	'usage: noexcuses'
+else
+	skiptest "Non-root user using -U option for other (invalid)" "root"
+fi
+
+if [ "$LOGNAME" != root ]
+then
+	skiptest "Root user using -U option for invalid user" "root"
+else
+	runtest "Root user using -U option for invalid user" "$noexcuses -U $LOGNAME:invalid true"
+	ok "Should contain: Invalid -U option argument: $LOGNAME:invalid (No such user)" \
+	'^Invalid -U option argument: .* \(No such user\)' \
+	'usage: noexcuses'
+fi
+
+cat <<EOF > $test/noexcuses.conf
+delay = 10m
+spool = $test/spool
+#mirror = $test/mirror
+cronpath = $test/cronpath
+pslong = ps -fp
+psfull = ps -fp
+path = /usr/bin:/bin:
+supath = /usr/bin:/bin:
+EOF
+
+runtest "The -A option without a mirror" "$noexcuses -A $other_hostname"
+ok "Should contain: The -A option requires a mirror directory to be configured" \
+'^The -A option requires a mirror directory to be configured' \
+'usage: noexcuses'
+
+runtest "The -F option without a mirror" "$noexcuses -F $other_hostname"
+ok "Should contain: The -F option requires a mirror directory to be configured" \
+'^The -F option requires a mirror directory to be configured' \
+'usage: noexcuses'
+
+runtest "No command supplied" "$noexcuses"
+ok "Should contain: No command supplied" \
+'^No command supplied' \
+'usage: noexcuses'
+
+[ "$num_fail" = 0 ] && rm -rf $test
+results
+

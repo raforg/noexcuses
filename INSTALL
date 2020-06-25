@@ -1,0 +1,59 @@
+INSTALL
+=======
+Noexcuses is written in Perl and should run on any UNIX-like system where
+cron runs. The optional initscript requires SVR4-style initscripts. There
+are no dependencies on any non-standard Perl modules. Support for Vixie cron
+syntax extensions is almost but not entirely complete.
+
+To install noexcuses and its manpage (under /usr/local by default):
+
+    tar xzf noexcuses-X.Y.tar.gz
+    cd noexcuses-X.Y
+    make install
+
+To install under /usr:
+
+    make PREFIX=/usr install
+
+To uninstall noexcuses and its manpage (from under /usr/local):
+
+    make uninstall
+
+To uninstall noexcuses and its manpage (from under /usr):
+
+    make PREFIX=/usr uninstall
+
+To install the optional initscript (only with SVR4-style initscripts):
+
+    make PREFIX=/usr install-init
+
+To uninstall the initscript:
+
+    make PREFIX=/usr uninstall-init
+
+Note that noexcuses can be installed under /usr/local (the default) or under
+/usr but the SVR4-style initscript must be installed with PREFIX=/usr or it
+won't be installed into /etc/init.d which is where it needs to be in order
+to work.
+
+For more details:
+
+    make help
+
+The manpage for noexcuses is noexcuses(1).
+
+REQUIREMENTS
+============
+Requires GNU make to install (but manual installation is easy).
+Requires perl (but no non-standard perl modules).
+Requires pod2man (comes with perl) to make the manpage.
+Requires pod2html (comes with perl) to make the html manpage.
+Requires cron.
+
+--------------------------------------------------------------------------------
+
+    URL: http://raf.org/noexcuses
+    GIT: https://github.com/raforg/noexcuses
+    Date: 20200625
+    Author: raf <raf@raf.org>
+

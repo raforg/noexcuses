@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# noexcuses - http://raf.org/noexcuses/
+# noexcuses - runs important cronjobs until they succeed
 #
-# Copyright (C) 2007 raf <raf@raf.org>
+# Copyright (C) 2007-2008, 2020 raf <raf@raf.org>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,20 +15,18 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-# or visit http://www.gnu.org/copyleft/gpl.html
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
 #
-# 20070131 raf <raf@raf.org>
+# 20200625 raf <raf@raf.org>
 
-config=/etc/default/noexcuses.init
+config=/etc/default/noexcuses
 period=1h
 restart=no
 recover=no
 relocated=no
 cancel=no
 
-for dir in /usr/bin /usr/sbin /bin /sbin /usr/local/bin /usr/local/sbin
+for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin
 do
 	[ -x "$dir/noexcuses" ] || continue
 	noexcuses="$dir/noexcuses"
@@ -49,13 +47,15 @@ yes()
 [ -r "$config" ] && . "$config"
 
 case "$1" in
-	start)
+	start|restart)
 		[ -n "$noexcuses" -a -x "$noexcuses" ] || die "Failed to find noexcuses: $noexcuses"
-		# Forget old jobs if they've been relocated to another cron host
+		# Forget outstanding jobs that were relocated to another cron host
 		yes "$relocated" && "$noexcuses" -f
-		# Restart known jobs (might be dangerous!)
+		# Cancel all known outstanding jobs (might be dangerous!)
+		yes "$cancel" && "$noexcuses" -c all
+		# Restart all known outstanding jobs (might be dangerous!)
 		yes "$restart" && "$noexcuses" -x all
-		# Start unknown/missing jobs (might be dangerous!)
+		# Recover/start unknown/missing jobs (might be dangerous!)
 		yes "$recover" && "$noexcuses" -R "$period"
 		;;
 
@@ -63,7 +63,7 @@ case "$1" in
 		;;
 
 	*)
-		echo "usage: $0 <start|stop>"
+		echo "usage: $0 <start|stop|restart>"
 		echo "See man noexcuses(1) for details."
 		exit 1
 		;;

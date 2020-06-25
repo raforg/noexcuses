@@ -14,9 +14,12 @@
 # cron host may incorrectly be restarted on this host. [might be dangerous!]
 #relocated=no
 
-# Restart known jobs on boot? (i.e. -x all) [might be dangerous!]
+# Cancel all known outstanding jobs on boot? (i.e. -c all) [might be dangerous!]
+#cancel=no
+
+# Restart all known outstanding jobs on boot? (i.e. -x all) [might be dangerous!]
 #restart=no
 
-# Recover missing jobs on boot? (i.e. -R) [might be dangerous!]
+# Recover unknown/missing jobs on boot? (i.e. -R $period) [might be dangerous!]
 #recover=no
 

@@ -1,6 +1,6 @@
-# noexcuses - http://raf.org/noexcuses/
+# noexcuses - runs important cronjobs until they succeed
 #
-# Copyright (C) 2007 raf <raf@raf.org>
+# Copyright (C) 2007-2008, 2020 raf <raf@raf.org>
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -13,77 +13,146 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-# or visit http://www.gnu.org/copyleft/gpl.html
+# along with this program; if not, see <https://www.gnu.org/licenses/>.
 #
-# 10070131 raf <raf@raf.org>
+# 20200625 raf <raf@raf.org>
 
-name := noexcuses
-version := 0.2
-mansect := 1
-id := $(name)-$(version)
-prefix := /usr
-bindir := $(prefix)/bin
-mandir := $(prefix)/man/man$(mansect)
-vardir := /var/$(name)
-docdir := $(prefix)/share/doc/$(name)
-etcdir := /etc
-defdir := $(etcdir)/default
-conf := $(name).conf
-init := $(name).init
-initdef := $(init).def
+NAME := noexcuses
+VERSION := 1.0
+DIST := $(NAME)-$(VERSION)
+DISTDIR := ../$(DIST)
+DISTFILE := ../$(DIST).tar.gz
+
+# PREFIX := $(DESTDIR)/usr
+PREFIX := $(DESTDIR)/usr/local
+BINDIR := $(PREFIX)/bin
+MANDIR := $(shell [ -d $(PREFIX)/share/man ] && echo $(PREFIX)/share/man/man1 || echo $(PREFIX)/man/man1)
+VARDIR := $(shell [ -d $(DESTDIR)/var/run ] && echo $(DESTDIR)/var/run/$(NAME) || echo $(DESTDIR)/var/$(NAME))
+ifeq ($(PREFIX),$(DESTDIR)/usr/local)
+	ETCDIR := $(PREFIX)/etc
+else
+	ETCDIR := $(DESTDIR)/etc
+endif
+DEFDIR := $(ETCDIR)/default
+
+BINFILES := $(NAME)
+MANFILES := $(NAME).1.gz
+HTMLFILES := $(NAME).1.html
+CONFFILE := $(NAME).conf
+INITFILE := $(NAME).init
+INITDEFS := $(NAME).init.def
+
+DISTFILES := \
+	README.md CHANGELOG COPYING INSTALL LICENSE Makefile \
+	$(BINFILES) $(MANFILES) $(HTMLFILES) \
+	$(CONFFILE) $(INITFILE) $(INITDEFS) run-tests
+
+INSTFILES := \
+	$(patsubst %, $(BINDIR)/%, $(BINFILES)) \
+	$(patsubst %, $(MANDIR)/%, $(MANFILES))
+
+CONF_INSTFILES := \
+	$(ETCDIR)/$(CONFFILE) \
+	$(VARDIR)
+
+INIT_INSTFILES := \
+	$(ETCDIR)/init.d/$(NAME) \
+	$(DEFDIR)/$(NAME)
 
 help:
 	@echo "This Makefile supports the following targets:"; \
 	echo; \
-	echo "    help           - show this help (default)"; \
-	echo "    install        - install $(name) under $(prefix)"; \
-	echo "    uninstall      - uninstall $(name) from $(prefix)"; \
-	echo "    install-init   - install the $(init) bootscript"; \
-	echo "    uninstall-init - uninstall the $(init) bootscript"; \
-	echo "    install-html   - install the manpage as HTML"; \
-	echo "    uninstall-html - uninstall the manpage as HTML"; \
-	echo "    purge          - uninstall everything including $(vardir)"; \
-	echo "    dist           - Create ../$(name)-$(version).tar.gz"; \
+	echo "  help           - Print this help (default)"; \
+	echo "  test           - Test $(NAME)"; \
+	echo "  install        - Install $(NAME) under $(PREFIX)"; \
+	echo "  uninstall      - Uninstall $(NAME) from $(PREFIX)"; \
+	echo "  install-init   - Install the sysvinit bootscripts (optional)"; \
+	echo "  uninstall-init - Uninstall the sysvinit bootscripts"; \
+	echo "  purge          - Uninstall everything including $(VARDIR)"; \
+	echo "  list           - List installed files/directories"; \
+	echo "  man            - Create the nroff manpage"; \
+	echo "  clean-man      - Delete the nroff manpage"; \
+	echo "  html           - Create the html manpage"; \
+	echo "  clean-html     - Delete the html manpage"; \
+	echo "  clean          - Delete the nroff/html manpages"; \
+	echo "  clobber        - Same as clean"; \
+	echo "  distclean      - Same as clean"; \
+	echo "  dist           - Create the distribution tarball $(DISTFILE)"; \
 	echo
 
-install:
-	mkdir -p $(bindir)
-	install -m 755 $(name) $(bindir)
-	mkdir -p $(mandir)
-	./$(name) -r > $(mandir)/$(name).$(mansect)
-	mkdir -p $(vardir)
-	chmod 1777 $(vardir)
-	[ -s $(etcdir)/$(conf) ] || install -m 644 $(conf) $(etcdir)
+test:
+	./run-tests
+
+check:
+	./run-tests
+
+install: $(INSTFILES) $(CONF_INSTFILES)
 
 uninstall:
-	rm -f $(bindir)/$(name) $(mandir)/$(name).$(mansect)* $(etcdir)/$(conf)
+	rm -rf $(INSTFILES)
 
-install-init:
-	install -m 755 $(init) /etc/init.d
-	for lvl in 2 3 4 5; do [ -d /etc/rc$$lvl.d ] || continue; [ -x /etc/rc$$lvl.d/S99$(init) ] || ln -s ../init.d/$(init) /etc/rc$$lvl.d/S99$(init); done
-	install -m 644 $(initdef) $(defdir)/$(init)
+install-init: $(INIT_INSTFILES)
+	for lvl in 2 3 4 5; do [ -d $(ETCDIR)/rc$$lvl.d ] || continue; [ -x $(ETCDIR)/rc$$lvl.d/S99$(NAME) ] || ln -s ../init.d/$(NAME) /etc/rc$$lvl.d/S99$(NAME); done
 
 uninstall-init:
-	rm -f /etc/init.d/$(init) /etc/rc[2-5].d/[SK][0-9][0-9]$(init) $(defdir)/$(init)
+	rm -f $(INIT_INSTFILES) /etc/rc[2-5].d/[SK][0-9][0-9]$(NAME)
 
-install-html:
-	mkdir -p $(docdir)/html
-	./$(name) -w > $(docdir)/html/$(name).$(mansect).html
+purge: uninstall uninstall-init
+	rm -rf $(CONF_INSTFILES)
 
-uninstall-html:
-	rm -rf $(docdir)
+list:
+	ls -laps $(INSTFILES) $(CONF_INSTFILES) $(INIT_INSTFILES)
 
-purge: uninstall uninstall-init uninstall-html
-	rm -rf $(docdir) $(vardir)
+$(BINDIR)/%: %
+	[ -d $(BINDIR) ] || mkdir -m 755 -p $(BINDIR)
+	install -m 755 $< $@
 
-dist:
-	@src="`basename \`pwd\``"; cd ..; \
-	[ "$$src" != "$(id)" -a ! -d "$(id)" ] && ln -s "$$src" "$(id)"; \
-	tar chzf "$(id).tar.gz" --exclude=.svn "$(id)"; \
-	[ -h "$(id)" ] && rm -f "$(id)"; \
-	ls -l "$(id).tar.gz"; \
-	tar tzvf "$(id).tar.gz"
+$(MANDIR)/%: %
+	[ -d $(MANDIR) ] || mkdir -m 755 -p $(MANDIR)
+	install -m 644 $< $@
+
+$(VARDIR):
+	[ -d $(VARDIR) ] || mkdir -m 1777 -p $(VARDIR)
+
+$(ETCDIR)/%: %
+	[ -d $(ETCDIR) ] || mkdir -m 755 -p $(ETCDIR)
+	install -m 644 $< $@
+
+$(ETCDIR)/init.d/%: %.init
+	[ -d $(ETCDIR)/init.d ] || mkdir -m 755 -p $(ETCDIR)/init.d
+	install -m 755 $< $@
+
+$(DEFDIR)/%: %.init.def
+	[ -d $(DEFDIR) ] || mkdir -m 755 -p $(DEFDIR)
+	install -m 644 $< $@
+
+man: $(MANFILES)
+
+%.1.gz: %
+	./$< -r | gzip > $@
+
+clean-man:
+	rm -f $(MANFILES)
+
+html: $(HTMLFILES)
+
+%.1.html: %
+	./$< -w > $@
+
+clean-html:
+	rm -f $(HTMLFILES)
+
+clean: clean-man clean-html
+
+clobber: clean
+
+distclean: clean
+
+dist: man html
+	mkdir $(DISTDIR)
+	cp -p $(DISTFILES) $(DISTDIR)
+	tar czf $(DISTFILE) $(DISTDIR)
+	rm -rf $(DISTDIR)
+	tar tzvf $(DISTFILE)
 
 # vi:set ts=4 sw=4:
