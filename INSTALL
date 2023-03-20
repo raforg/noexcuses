@@ -7,8 +7,8 @@ syntax extensions is almost but not entirely complete.
 
 To install noexcuses and its manpage (under /usr/local by default):
 
-    tar xzf noexcuses-X.Y.tar.gz
-    cd noexcuses-X.Y
+    tar xzf noexcuses-1.0.tar.gz
+    cd noexcuses-1.0
     make install
 
 To install under /usr:
@@ -54,6 +54,7 @@ Requires cron.
 
     URL: http://raf.org/noexcuses
     GIT: https://github.com/raforg/noexcuses
+    GIT: https://codeberg.org/raforg/noexcuses
     Date: 20200625
     Author: raf <raf@raf.org>
 

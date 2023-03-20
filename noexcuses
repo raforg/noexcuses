@@ -651,6 +651,7 @@ I<daemon(1)>
 
 L<http://raf.org/noexcuses/>,
 L<https://github.com/raforg/noexcuses/>
+L<https://codeberg.org/raforg/noexcuses/>
 
 =cut
 
@@ -720,6 +721,7 @@ sub help
 		"Author: raf <raf\@raf.org>\n",
 		"URL: http://raf.org/noexcuses/\n",
 		"GIT: https://github.com/raforg/noexcuses/\n",
+		"GIT: https://codeberg.org/raforg/noexcuses/\n",
 		"\n",
 		"Copyright (C) 2007-2008, 2020 raf <raf\@raf.org>\n",
 		"\n",

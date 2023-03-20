@@ -64,6 +64,7 @@ There is a manual entry:
 
     URL: http://raf.org/noexcuses
     GIT: https://github.com/raforg/noexcuses
+    GIT: https://codeberg.org/raforg/noexcuses
     Date: 20200625
     Author: raf <raf@raf.org>
 
