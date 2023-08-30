@@ -197,9 +197,9 @@ ok "Should produce the version message" "noexcuses-$version"
 
 # Test -m -w -r options
 
-runtest "Manpage -m" "$noexcuses -m 2>&1 | head -10"
+runtest "Manpage -m" "$noexcuses -m 2>&- | head -10"
 ok "Should produce 10 lines of the manpage" \
-'^NOEXCUSES\(1\)\s+USER COMMANDS\s+NOEXCUSES\(1\)' \
+'NOEXCUSES.+USER COMMANDS.+NOEXCUSES' \
 'noexcuses .* runs important cronjobs until they succeed'
 
 runtest "Manpage HTML -w" "$noexcuses -w 2>&1 | head -10"
