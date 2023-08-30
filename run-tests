@@ -1012,7 +1012,7 @@ fi
 
 if [ "$LOGNAME" != root ]
 then
-	skiptest "Root user using -U option for invalid user" "root"
+	skiptest "Root user using -U option for invalid user" "not root"
 else
 	runtest "Root user using -U option for invalid user" "$noexcuses -U $LOGNAME:invalid true"
 	ok "Should contain: Invalid -U option argument: $LOGNAME:invalid (No such user)" \
